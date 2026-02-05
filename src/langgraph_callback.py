@@ -4,8 +4,8 @@ from typing import Dict, Any, Optional, List
 from uuid import UUID
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
-from eventbus import eventbus
-
+from eventbus import Eventbus
+from event import Event
 class langgraph_callback(BaseCallbackHandler):
     def __init__(self, eventbus):
         super().__init__()
@@ -20,16 +20,6 @@ class langgraph_callback(BaseCallbackHandler):
             inv.get("model_name")
             or inv.get("model")
             or (serialized or {}).get("name", "unknown")
-        )
-
-    def _track_message(self, message: BaseMessage):
-        self.tracer.track_message(
-            role=getattr(message, "type", "unknown"),
-            content=str(message.content),
-            metadata={
-                "id": getattr(message, "id", None),
-                "name": getattr(message, "name", None),
-            }
         )
     
     def on_chat_model_start(self, serialized: dict[str, Any], messages: list[list[BaseMessage]], *, run_id: UUID, parent_run_id: UUID | None = None, tags: list[str] | None = None, metadata: dict[str, Any] | None = None, **kwargs: Any):
@@ -51,12 +41,13 @@ class langgraph_callback(BaseCallbackHandler):
         }
 
         if self.eventbus:
-            self.eventbus.publish("llm_start", {
-                "run_id": str(run_id),
-                "model": model,
-                "messages": flat_messages,
-                "timestamp": time.time()
-            })
+            self.eventbus.publish(EventType.LLM_CALL_START, Event(
+                type=EventType.LLM_CALL_START,
+                run_id=str(run_id),
+                model=model,
+                messages=flat_messages,
+                timestamp=time.time()
+            ))
 
 
         
@@ -83,25 +74,27 @@ class langgraph_callback(BaseCallbackHandler):
                 text = str(gen.text) if gen.text else None
 
             if self.eventbus:
-                self.eventbus.publish("llm_end", {
-                    "run_id": str(run_id),
-                    "text": text,
-                    "usage": usage,
-                    "duration_ms": duration,
-                    "timestamp": time.time()
-                })
+                self.eventbus.publish(EventType.LLM_CALL_END, Event(
+                    type=EventType.LLM_CALL_END,
+                    run_id=str(run_id),
+                    text=text,
+                    usage=usage,
+                    duration_ms=duration,
+                    timestamp=time.time()
+                ))
 
     
     def on_llm_error(self, error: Exception, *, run_id: str,**kwargs):
         run = self._runs.get(run_id)
         
         if self.eventbus:
-            self.eventbus.publish("llm_error", {
-                "run_id": str(run_id),
-                "model": run.get("model", "unknown"),
-                "error": str(error),
-                "timestamp": time.time()
-            })
+            self.eventbus.publish(EventType.LLM_CALL_ERROR, Event(
+                type=EventType.LLM_CALL_ERROR,
+                run_id=str(run_id),
+                model=run.get("model", "unknown"),
+                error=str(error),
+                timestamp=time.time()
+            ))
 
 
     def on_tool_start( self, serialized: Dict[str, Any], input_str: str, *, run_id: str, inputs: Optional[Dict] = None, **kwargs):
@@ -116,12 +109,13 @@ class langgraph_callback(BaseCallbackHandler):
         
         # Publish event
         if self.eventbus:
-            self.eventbus.publish("tool_start", {
-                "run_id": str(run_id),
-                "tool_name": name,
-                "tool_args": args,
-                "timestamp": time.time()
-            })
+            self.eventbus.publish(EventType.TOOL_CALL_START, Event(
+                type=EventType.TOOL_CALL_START,
+                run_id=str(run_id),
+                tool_name=name,
+                tool_args=args,
+                timestamp=time.time()
+            ))
     
     def on_tool_end( self, output: str, *, run_id: str, **kwargs):
         run = self._tool_runs.pop(run_id, {})
@@ -129,24 +123,26 @@ class langgraph_callback(BaseCallbackHandler):
         
         # Publish event
         if self.eventbus:
-            self.eventbus.publish("tool_end", {
-                "run_id": str(run_id),
-                "tool_name": run.get("name", "unknown"),
-                "content": str(output),
-                "duration_ms": duration_ms,
-                "timestamp": time.time()
-            })
+            self.eventbus.publish(EventType.TOOL_CALL_END, Event(
+                type=EventType.TOOL_CALL_END,
+                run_id=str(run_id),
+                tool_name=run.get("name", "unknown"),
+                content=str(output),
+                duration_ms=duration_ms,
+                timestamp=time.time()
+            ))
 
     def on_tool_error(self, error: Exception, *, run_id: str, **kwargs):
         run = self._tool_runs.pop(run_id, {})
         
         if self.eventbus:
-            self.eventbus.publish("tool_error", {
-                "run_id": str(run_id),
-                "tool_name": run.get("name", "unknown"),
-                "error": str(error),
-                "timestamp": time.time()
-            })
+            self.eventbus.publish(EventType.TOOL_CALL_ERROR, Event(
+                type=EventType.TOOL_CALL_ERROR,
+                run_id=str(run_id),
+                tool_name=run.get("name", "unknown"),
+                error=str(error),
+                timestamp=time.time()
+            ))
 
     def on_chain_end(self, outputs: Dict[str, Any], *, run_id: str, **kwargs):
         """Called when a chain completes - publishes chain_end event."""
@@ -176,7 +172,12 @@ class langgraph_callback(BaseCallbackHandler):
                 # Include raw outputs for other chain types
                 event_data["outputs"] = str(outputs)
             
-            self.eventbus.publish("chain_end", event_data)
+            self.eventbus.publish(EventType.AGENT_TURN_END, Event(
+                type=EventType.AGENT_TURN_END,
+                run_id=str(run_id),
+                outputs=event_data,
+                timestamp=time.time()
+            ))
     
 
 

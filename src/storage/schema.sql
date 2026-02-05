@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 
 CREATE TABLE IF NOT EXISTS branches (
-    name TEXT PRIMARY KEY AUTOINCREMENT,              
-    branch_id INTEGER UNIQUE NOT NULL,     
+    name TEXT PRIMARY KEY,              
+    branch_id INTEGER UNIQUE NOT NULL AUTOINCREMENT,     
     head_node_id INTEGER NOT NULL,        
     base_node_id INTEGER NOT NULL,
     status TEXT NOT NULL,              
