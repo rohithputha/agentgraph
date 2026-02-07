@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     node_id INTEGER,                       
     filesystem_ref TEXT,                
     files_changed TEXT,                 
+    memory TEXT,                        
+    history TEXT,                       
     created_at INTEGER NOT NULL,           
     compressed INTEGER,                 
     size_bytes INTEGER,                 

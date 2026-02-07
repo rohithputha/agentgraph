@@ -58,6 +58,16 @@ class DagStore:
         ).fetchone()
         return self._row_to_node(row) if row else None
 
+    def peek(self, node_id: int) -> Optional[dict]:
+        """Peek at the memory (content) for a given node number.
+        
+        Returns just the content dict without loading the full ExecutionNode.
+        """
+        row = self.conn.execute(
+            "SELECT content FROM nodes WHERE id = ?", (node_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
     def get_children(self, node_id: int) -> List[ExecutionNode]:
         rows = self.conn.execute(
             "SELECT * FROM nodes WHERE parent_id = ? ORDER BY timestamp",
