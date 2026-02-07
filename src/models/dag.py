@@ -36,9 +36,12 @@ class BranchStatus(Enum):
 @dataclass
 class ExecutionNode:
     """Lightweight node (~1KB) created for every agent action. Forms the DAG."""
+    user_id: str
+    session_id: str
     id: str
     parent_id: Optional[str]
     thread_id: str
+    checkpoint_sha: Optional[str] = None
 
     action_type: ActionType
     content: dict
@@ -55,6 +58,8 @@ class ExecutionNode:
 @dataclass
 class Branch:
     """Named pointer to a position in the DAG."""
+    user_id: str
+    session_id: str
     name: str
     thread_id: str
     head_node_id: str

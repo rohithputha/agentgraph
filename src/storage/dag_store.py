@@ -25,26 +25,26 @@ class DagStore:
 
     # ─── Nodes ────────────────────────────────────────────────────
 
-    def insert_node(self, node: ExecutionNode) -> int:
+    def insert_node(self, user_id: str, session_id: str, node: ExecutionNode) -> int:
         """Insert node and return the auto-generated INTEGER id."""
-        # Convert node.id from string to int if needed, or let SQLite auto-generate
-        # Note: schema uses INTEGER PRIMARY KEY AUTOINCREMENT
         cursor = self.conn.execute(
             """INSERT INTO nodes (
-                parent_id, branch_id, action_type, content,
-                triggered_by, caller_context, state_hash,
+                user_id, session_id, parent_id, branch_id, checkpoint_sha,
+                action_type, content, triggered_by, caller_context, state_hash,
                 timestamp, duration_ms, token_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
+                user_id,
+                session_id,
                 int(node.parent_id) if node.parent_id else None,
-                # Assuming thread_id maps to branch_id - need to get branch_id from branch name
-                self._get_branch_id_from_thread_id(node.thread_id),
+                self._get_branch_id_from_thread_id(user_id, session_id, node.thread_id),
+                node.checkpoint_sha,
                 node.action_type.value,
                 json.dumps(node.content),
                 node.triggered_by.value,
                 json.dumps(node.caller_context),
                 node.state_hash,
-                int(node.timestamp.timestamp()),  # Convert to INTEGER (Unix timestamp)
+                int(node.timestamp.timestamp()),
                 node.duration_ms,
                 node.token_count,
             ),
@@ -52,42 +52,43 @@ class DagStore:
         self.conn.commit()
         return cursor.lastrowid
 
-    def get_node(self, node_id: int) -> Optional[ExecutionNode]:
+    def get_node(self, user_id: str, session_id: str, node_id: int) -> Optional[ExecutionNode]:
         row = self.conn.execute(
-            "SELECT * FROM nodes WHERE id = ?", (node_id,)
+            "SELECT * FROM nodes WHERE user_id = ? AND session_id = ? AND id = ?",
+            (user_id, session_id, node_id)
         ).fetchone()
         return self._row_to_node(row) if row else None
 
-    def peek(self, node_id: int) -> Optional[dict]:
-        """Peek at the memory (content) for a given node number.
-        
-        Returns just the content dict without loading the full ExecutionNode.
-        """
+    def peek(self, user_id: str, session_id: str, node_id: int) -> Optional[dict]:
+        """Peek at the memory (content) for a given node number."""
         row = self.conn.execute(
-            "SELECT content FROM nodes WHERE id = ?", (node_id,)
+            "SELECT content FROM nodes WHERE user_id = ? AND session_id = ? AND id = ?",
+            (user_id, session_id, node_id)
         ).fetchone()
         return json.loads(row[0]) if row else None
 
-    def get_children(self, node_id: int) -> List[ExecutionNode]:
+    def get_children(self, user_id: str, session_id: str, node_id: int) -> List[ExecutionNode]:
         rows = self.conn.execute(
-            "SELECT * FROM nodes WHERE parent_id = ? ORDER BY timestamp",
-            (node_id,),
+            "SELECT * FROM nodes WHERE user_id = ? AND session_id = ? AND parent_id = ?",
+            (user_id, session_id, node_id)
         ).fetchall()
-        return [self._row_to_node(r) for r in rows]
+        return [self._row_to_node(row) for row in rows]
 
-    def get_branch_nodes(self, branch_id: int) -> List[ExecutionNode]:
+    def get_branch_nodes(self, user_id: str, session_id: str, branch_id: int) -> List[ExecutionNode]:
         """Get all nodes belonging to a specific branch."""
         rows = self.conn.execute(
-            "SELECT * FROM nodes WHERE branch_id = ? ORDER BY timestamp",
-            (branch_id,),
+            """SELECT * FROM nodes 
+               WHERE user_id = ? AND session_id = ? AND branch_id = ? 
+               ORDER BY timestamp""",
+            (user_id, session_id, branch_id)
         ).fetchall()
-        return [self._row_to_node(r) for r in rows]
+        return [self._row_to_node(row) for row in rows]
 
-    def get_path_to_root(self, node_id: int) -> List[ExecutionNode]:
+    def get_path_to_root(self, user_id: str, session_id: str, node_id: int) -> List[ExecutionNode]:
         path = []
         current_id: Optional[int] = node_id
         while current_id:
-            node = self.get_node(current_id)
+            node = self.get_node(user_id, session_id, current_id)
             if not node:
                 break
             path.append(node)
@@ -96,23 +97,24 @@ class DagStore:
 
     # ─── Branches ─────────────────────────────────────────────────
 
-    def insert_branch(self, branch: Branch) -> int:
+    def insert_branch(self, user_id: str, session_id: str, branch: Branch) -> int:
         """Insert branch and return the auto-generated branch_id."""
         cursor = self.conn.execute(
             """INSERT INTO branches (
-                name, head_node_id, base_node_id,
-                status, intent, status_reason, created_by, created_at,
-                tokens_used, time_elapsed_seconds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                user_id, session_id, name, head_node_id, base_node_id, status, intent,
+                status_reason, created_by, created_at, tokens_used, time_elapsed_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
+                user_id,
+                session_id,
                 branch.name,
                 int(branch.head_node_id) if branch.head_node_id else None,
                 int(branch.base_node_id) if branch.base_node_id else None,
                 branch.status.value,
                 branch.intent,
-                getattr(branch, 'status_reason', None),  # New field in schema
+                getattr(branch, 'status_reason', None),
                 branch.created_by.value,
-                int(branch.created_at.timestamp()),  # Convert to INTEGER (Unix timestamp)
+                int(branch.created_at.timestamp()),
                 branch.tokens_used,
                 branch.time_elapsed_seconds,
             ),
@@ -120,9 +122,10 @@ class DagStore:
         self.conn.commit()
         return cursor.lastrowid
 
-    def get_branch(self, name: str) -> Optional[Branch]:
+    def get_branch(self, user_id: str, session_id: str, name: str) -> Optional[Branch]:
         row = self.conn.execute(
-            "SELECT * FROM branches WHERE name = ?", (name,)
+            "SELECT * FROM branches WHERE user_id = ? AND session_id = ? AND name = ?",
+            (user_id, session_id, name)
         ).fetchone()
         return self._row_to_branch(row) if row else None
 
@@ -133,31 +136,44 @@ class DagStore:
         ).fetchone()
         return self._row_to_branch(row) if row else None
 
-    def list_branches(self, status: Optional[BranchStatus] = None) -> List[Branch]:
+    def list_branches(self, user_id: str, session_id: str, status: Optional[BranchStatus] = None) -> List[Branch]:
         if status:
             rows = self.conn.execute(
-                "SELECT * FROM branches WHERE status = ? ORDER BY created_at",
-                (status.value,),
+                """SELECT * FROM branches WHERE user_id = ? AND session_id = ? AND status = ? 
+                   ORDER BY created_at""",
+                (user_id, session_id, status.value),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM branches ORDER BY created_at"
+                "SELECT * FROM branches WHERE user_id = ? AND session_id = ? ORDER BY created_at",
+                (user_id, session_id)
             ).fetchall()
         return [self._row_to_branch(r) for r in rows]
+    
+    def get_active_branch(self, user_id: str, session_id: str) -> Optional[Branch]:
+        """Get the active branch for a session (status='active')."""
+        row = self.conn.execute(
+            """SELECT * FROM branches WHERE user_id = ? AND session_id = ? AND status = ? 
+               ORDER BY created_at DESC LIMIT 1""",
+            (user_id, session_id, BranchStatus.ACTIVE.value)
+        ).fetchone()
+        return self._row_to_branch(row) if row else None
 
-    def update_branch_head(self, branch_id: int, new_head_id: int):
-        """Update branch head using branch_id instead of thread_id."""
+    def update_branch_head(self, user_id: str, session_id: str, branch_id: int, new_head_id: int):
+        """Update branch head."""
         self.conn.execute(
-            "UPDATE branches SET head_node_id = ? WHERE branch_id = ?",
-            (new_head_id, branch_id),
+            """UPDATE branches SET head_node_id = ? 
+               WHERE user_id = ? AND session_id = ? AND branch_id = ?""",
+            (new_head_id, user_id, session_id, branch_id),
         )
         self.conn.commit()
 
-    def update_branch_status(self, branch_id: int, status: BranchStatus, reason: Optional[str] = None):
+    def update_branch_status(self, user_id: str, session_id: str, branch_id: int, status: BranchStatus, reason: Optional[str] = None):
         """Update branch status and optional status_reason."""
         self.conn.execute(
-            "UPDATE branches SET status = ?, status_reason = ? WHERE branch_id = ?",
-            (status.value, reason, branch_id),
+            """UPDATE branches SET status = ?, status_reason = ? 
+               WHERE user_id = ? AND session_id = ? AND branch_id = ?""",
+            (status.value, reason, user_id, session_id, branch_id),
         )
         self.conn.commit()
 
@@ -189,13 +205,23 @@ class DagStore:
         ).fetchone()
         return row
 
-    def get_checkpoint_nodes(self) -> List[ExecutionNode]:
-        """All CHECKPOINT action type nodes, most recent first."""
+    def get_checkpoint_nodes(self, user_id: str, session_id: str) -> List[ExecutionNode]:
+        """All CHECKPOINT action type nodes for a session, most recent first."""
         rows = self.conn.execute(
-            "SELECT * FROM nodes WHERE action_type = ? ORDER BY timestamp DESC",
-            ("checkpoint",),
+            """SELECT * FROM nodes WHERE user_id = ? AND session_id = ? AND action_type = ? 
+               ORDER BY timestamp DESC""",
+            (user_id, session_id, "checkpoint"),
         ).fetchall()
         return [self._row_to_node(r) for r in rows]
+    
+    def get_latest_checkpoint(self, user_id: str, session_id: str) -> Optional[ExecutionNode]:
+        """Get most recent checkpoint node for this session (for parent SHA tracking)."""
+        row = self.conn.execute(
+            """SELECT * FROM nodes WHERE user_id = ? AND session_id = ? AND checkpoint_sha IS NOT NULL 
+               ORDER BY timestamp DESC LIMIT 1""",
+            (user_id, session_id)
+        ).fetchone()
+        return self._row_to_node(row) if row else None
 
     def list_checkpoints(self) -> List[tuple]:
         """List all checkpoints, most recent first."""
@@ -206,61 +232,75 @@ class DagStore:
 
     # ─── Helper Methods ───────────────────────────────────────────
 
-    def _get_branch_id_from_thread_id(self, thread_id: str) -> int:
-        """
-        Map thread_id (string) to branch_id (integer).
-        This is a transitional helper - ideally the models should be updated to use branch_id directly.
-        For now, we'll try to find the branch by name (thread_id) and return its branch_id.
-        """
-        # Assuming thread_id is the branch name for now
-        branch = self.get_branch(thread_id)
-        if branch:
-            # Get the branch_id from the database
-            row = self.conn.execute(
-                "SELECT branch_id FROM branches WHERE name = ?", (thread_id,)
-            ).fetchone()
-            return row[0] if row else 0
-        return 0  # Default fallback
+    def _get_branch_id_from_thread_id(self, user_id: str, session_id: str, thread_id: str) -> Optional[int]:
+        """Map thread_id to branch_id for a specific session."""
+        row = self.conn.execute(
+            "SELECT branch_id FROM branches WHERE user_id = ? AND session_id = ? AND name = ?",
+            (user_id, session_id, thread_id)
+        ).fetchone()
+        return row[0] if row else None
 
     # ─── Row → dataclass ──────────────────────────────────────────
 
     def _row_to_node(self, row) -> ExecutionNode:
-        """Map database row to ExecutionNode. Schema: id, parent_id, branch_id, action_type, content, 
-        triggered_by, caller_context, state_hash, timestamp, duration_ms, token_count"""
-        # Get the branch to retrieve thread_id (for backward compatibility with models)
-        branch = self.get_branch_by_id(row[2])
-        thread_id = branch.thread_id if branch else str(row[2])
+        """Map database row to ExecutionNode. 
+        Schema: id, parent_id, branch_id, user_id, session_id, checkpoint_sha,
+                action_type, content, triggered_by, caller_context, state_hash, 
+                timestamp, duration_ms, token_count
+        """
+        # Schema indices after our changes:
+        # 0:id, 1:parent_id, 2:branch_id, 3:user_id, 4:session_id, 5:checkpoint_sha,
+        # 6:action_type, 7:content, 8:triggered_by, 9:caller_context, 10:state_hash,
+        # 11:timestamp, 12:duration_ms, 13:token_count
+       
+        user_id = row[3]
+        session_id = row[4]
+        branch_id = row[2]
+        
+        # Get thread_id from branch for backward compatibility
+        branch = self.get_branch_by_id(branch_id)
+        thread_id = branch.thread_id if branch else str(branch_id)
         
         return ExecutionNode(
-            id=str(row[0]),  # Convert INTEGER id to string for compatibility
+            user_id=user_id,
+            session_id=session_id,
+            id=str(row[0]),
             parent_id=str(row[1]) if row[1] else None,
-            thread_id=thread_id,  # Map branch_id back to thread_id
-            action_type=ActionType(row[3]),
-            content=json.loads(row[4]),
-            triggered_by=CallerType(row[5]),
-            caller_context=json.loads(row[6]) if row[6] else {},
-            state_hash=row[7],
-            timestamp=datetime.fromtimestamp(row[8]),  # Convert INTEGER timestamp to datetime
-            duration_ms=row[9],
-            token_count=row[10],
+            thread_id=thread_id,
+            checkpoint_sha=row[5],
+            action_type=ActionType(row[6]),
+            content=json.loads(row[7]),
+            triggered_by=CallerType(row[8]),
+            caller_context=json.loads(row[9]) if row[9] else {},
+            state_hash=row[10],
+            timestamp=datetime.fromtimestamp(row[11]),
+            duration_ms=row[12],
+            token_count=row[13],
         )
 
     def _row_to_branch(self, row) -> Branch:
-        """Map database row to Branch. Schema: branch_id, name, head_node_id, base_node_id, 
-        status, intent, status_reason, created_by, created_at, tokens_used, time_elapsed_seconds"""
+        """Map database row to Branch. 
+        Schema: branch_id, name, user_id, session_id, head_node_id, base_node_id,
+                status, intent, status_reason, created_by, created_at, tokens_used, time_elapsed_seconds
+        """
+        # Schema indices:
+        # 0:branch_id, 1:name, 2:user_id, 3:session_id, 4:head_node_id, 5:base_node_id,
+        # 6:status, 7:intent, 8:status_reason, 9:created_by, 10:created_at, 11:tokens_used, 12:time_elapsed_seconds
         branch = Branch(
+            user_id=row[2],
+            session_id=row[3],
             name=row[1],
             thread_id=row[1],  # Use name as thread_id for backward compatibility
-            head_node_id=str(row[2]) if row[2] else None,  # Convert INTEGER to string
-            base_node_id=str(row[3]) if row[3] else None,  # Convert INTEGER to string
-            status=BranchStatus(row[4]),
-            intent=row[5] or "",
-            created_by=CallerType(row[7]),
-            created_at=datetime.fromtimestamp(row[8]),  # Convert INTEGER timestamp to datetime
-            tokens_used=row[9] or 0,
-            time_elapsed_seconds=row[10] or 0.0,
+            head_node_id=str(row[4]) if row[4] else None,
+            base_node_id=str(row[5]) if row[5] else None,
+            status=BranchStatus(row[6]),
+            intent=row[7] or "",
+            created_by=CallerType(row[9]),
+            created_at=datetime.fromtimestamp(row[10]),
+            tokens_used=row[11] or 0,
+            time_elapsed_seconds=row[12] or 0.0,
         )
         # Add status_reason as a dynamic attribute if needed
-        if row[6]:  # status_reason
-            setattr(branch, 'status_reason', row[6])
+        if row[8]:  # status_reason
+            setattr(branch, 'status_reason', row[8])
         return branch
