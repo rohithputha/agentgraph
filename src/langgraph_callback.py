@@ -5,7 +5,7 @@ from uuid import UUID
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from eventbus import Eventbus
-from event import Event
+from event import Event, EventType
 class langgraph_callback(BaseCallbackHandler):
     def __init__(self, eventbus):
         super().__init__()

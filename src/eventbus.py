@@ -1,3 +1,4 @@
+from typing import Callable
 
 from event import EventType, Event
 class Eventbus:

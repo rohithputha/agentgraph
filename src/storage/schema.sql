@@ -18,10 +18,10 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 
 CREATE TABLE IF NOT EXISTS branches (
-    name TEXT PRIMARY KEY,              
-    branch_id INTEGER UNIQUE NOT NULL AUTOINCREMENT,     
-    head_node_id INTEGER NOT NULL,        
-    base_node_id INTEGER NOT NULL,
+    branch_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,              
+    head_node_id INTEGER,        
+    base_node_id INTEGER,
     status TEXT NOT NULL,              
     intent TEXT,                        
     status_reason TEXT,
@@ -53,9 +53,9 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 -- Indexes for Performance
 -- ═══════════════════════════════════════════════════════════════
 
--- Query nodes by thread/branch
-CREATE INDEX IF NOT EXISTS idx_nodes_thread
-ON nodes(thread_id);
+-- Query nodes by branch
+CREATE INDEX IF NOT EXISTS idx_nodes_branch
+ON nodes(branch_id);
 
 -- Traverse DAG (get children of node)
 CREATE INDEX IF NOT EXISTS idx_nodes_parent
@@ -82,7 +82,7 @@ SELECT
     b.time_elapsed_seconds,
     b.created_at
 FROM branches b
-LEFT JOIN nodes n ON n.thread_id = b.thread_id
+LEFT JOIN nodes n ON n.branch_id = b.branch_id
 GROUP BY b.name;
 
 -- View: Recent activity
@@ -90,11 +90,11 @@ CREATE VIEW IF NOT EXISTS recent_activity AS
 SELECT
     n.id,
     n.action_type,
-    n.thread_id,
+    n.branch_id,
     b.name as branch_name,
     n.timestamp
 FROM nodes n
-JOIN branches b ON b.thread_id = n.thread_id
+JOIN branches b ON b.branch_id = n.branch_id
 ORDER BY n.timestamp DESC
 LIMIT 100;
 
@@ -103,10 +103,10 @@ CREATE VIEW IF NOT EXISTS node_tree AS
 SELECT
     n.id,
     n.parent_id,
-    n.thread_id,
+    n.branch_id,
     n.action_type,
     n.timestamp,
     b.name as branch_name
 FROM nodes n
-JOIN branches b ON b.thread_id = n.thread_id
+JOIN branches b ON b.branch_id = n.branch_id
 ORDER BY n.timestamp;

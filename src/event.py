@@ -1,3 +1,9 @@
+from enum import Enum
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Optional
+
+
 class EventType(Enum):
     USER_INPUT = "user_input"
     LLM_CALL_START = "llm_call_start"
@@ -18,9 +24,11 @@ class Event:
     """Payload for every event in the system."""
     type: EventType
     timestamp: datetime = field(default_factory=datetime.now)
-
+    run_id: Optional[str] = None
     content: Optional[str] = None
+    text: Optional[str] = None 
     messages: Optional[list] = None
+    outputs: Any = None  
     tool_name: Optional[str] = None
     tool_args: Optional[dict] = None
     tool_result: Any = None

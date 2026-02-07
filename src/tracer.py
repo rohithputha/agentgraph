@@ -1,17 +1,34 @@
-
+"""
+Tracer - Subscribes to events from LangGraph callbacks and records nodes in the DAG.
+"""
 
 import time
 import uuid
 from datetime import datetime
-from eventbus  import Eventbus
-from models.dag import *
-from models.agit import Agit
+from typing import TYPE_CHECKING
+
+from eventbus import Eventbus
+from event import Event, EventType
+from models.dag import ExecutionNode, ActionType, CallerType
+
+if TYPE_CHECKING:
+    from core import AgentGraph
+
+
+def _generate_id() -> str:
+    """Generate a unique ID for nodes."""
+    return str(uuid.uuid4())[:8]
+
 
 class Tracer:
-    def __init__(self,agit: Agit):
+    """Listens to events and creates DAG nodes for each action."""
+    
+    def __init__(self, agit: 'AgentGraph'):
         self.eventbus = agit.eventbus
-        self.store = agit.store
+        self.store = agit.dag_store
         self.agit = agit
+        self.current_turn = 0
+        self._seen_keys: set = set()  # For deduplication
         self.eventbus.subscribe_all(self.handle_event)
         
     def handle_event(self, event: Event):
@@ -64,6 +81,18 @@ class Tracer:
             },
         )
 
+    def _on_stream_chunk(self, event: Event):
+        """Handle streaming chunk - typically don't create nodes for each chunk."""
+        pass  # Streaming chunks are ephemeral, we record the final response
+
+    def _on_stream_end(self, event: Event):
+        """Handle stream end - create node with full response."""
+        self._create_node(
+            action_type=ActionType.LLM_RESPONSE,
+            triggered_by=CallerType.SYSTEM,
+            content={"response": event.content, "streamed": True},
+        )
+
     def _on_llm_error(self, event: Event):
         self._create_node(
             action_type=ActionType.LLM_ERROR,
@@ -101,7 +130,7 @@ class Tracer:
             content={
                 "tool": event.tool_name,
                 "result": event.content,
-                "tool_call_id": event.metadata.get("tool_call_id"),
+                "tool_call_id": event.metadata.get("tool_call_id") if event.metadata else None,
                 "duration_ms": event.duration_ms,
             },
         )
@@ -122,13 +151,26 @@ class Tracer:
             triggered_by=CallerType.SYSTEM,
             content={},
         )
-    
+
+    # ─── Deduplication Helpers ─────────────────────────────────────
+
+    def _is_duplicate(self, key: str) -> bool:
+        return key in self._seen_keys
+
+    def _mark_seen(self, key: str):
+        self._seen_keys.add(key)
+
+    # ─── Node Creation ─────────────────────────────────────────────
 
     def _create_node(self, action_type: ActionType, triggered_by: CallerType, content: dict) -> ExecutionNode:
+        # Skip if no active branch
+        if not self.agit.current_branch_id:
+            return None
+            
         node = ExecutionNode(
             id=_generate_id(),
-            parent_id=self.agit.current_node_id,
-            thread_id=self.agit.current_thread_id,
+            parent_id=str(self.agit.current_node_id) if self.agit.current_node_id else None,
+            thread_id=self.agit.current_thread_id or "main",
             action_type=action_type,
             content=content,
             triggered_by=triggered_by,
@@ -140,6 +182,7 @@ class Tracer:
         )
         new_node_id = self.store.insert_node(node)
         self.agit.current_node_id = new_node_id
-        self.store.update_branch_head(self.agit.current_branch_id, new_node_id)
+        if self.agit.current_branch_id:
+            self.store.update_branch_head(self.agit.current_branch_id, new_node_id)
         return node
     

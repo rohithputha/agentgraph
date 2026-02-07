@@ -246,11 +246,11 @@ class DagStore:
         )
 
     def _row_to_branch(self, row) -> Branch:
-        """Map database row to Branch. Schema: name, branch_id, head_node_id, base_node_id, 
+        """Map database row to Branch. Schema: branch_id, name, head_node_id, base_node_id, 
         status, intent, status_reason, created_by, created_at, tokens_used, time_elapsed_seconds"""
         branch = Branch(
-            name=row[0],
-            thread_id=row[0],  # Use name as thread_id for backward compatibility
+            name=row[1],
+            thread_id=row[1],  # Use name as thread_id for backward compatibility
             head_node_id=str(row[2]) if row[2] else None,  # Convert INTEGER to string
             base_node_id=str(row[3]) if row[3] else None,  # Convert INTEGER to string
             status=BranchStatus(row[4]),
