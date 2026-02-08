@@ -6,15 +6,15 @@ from models.dag import Branch, BranchStatus, CallerType
 class BranchTools:
     """
     Branch management tools for creating, switching, and listing branches.
-    Provides session-aware branch operations on top of AgentGraph.
+    Provides session-aware branch operations on top of AgentGit.
     """
 
     def __init__(self, ag):
         """
-        Initialize BranchTools with an AgentGraph instance.
+        Initialize BranchTools with an AgentGit instance.
 
         Args:
-            ag: AgentGraph instance to operate on
+            ag: AgentGit instance to operate on
         """
         self.ag = ag
 

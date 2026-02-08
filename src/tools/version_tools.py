@@ -5,15 +5,15 @@ from models.dag import Checkpoint
 class VersionTools:
     """
     Version control tools for creating and managing checkpoints.
-    Provides session-aware checkpoint operations on top of AgentGraph.
+    Provides session-aware checkpoint operations on top of AgentGit.
     """
 
     def __init__(self, ag):
         """
-        Initialize VersionTools with an AgentGraph instance.
+        Initialize VersionTools with an AgentGit instance.
 
         Args:
-            ag: AgentGraph instance to operate on
+            ag: AgentGit instance to operate on
         """
         self.ag = ag
 

@@ -1,8 +1,8 @@
-# AgentGraph
+# AgentGit
 
 **Multi-user DAG-based execution tracking and versioning for LangGraph agents**
 
-AgentGraph provides Git-like branching and checkpointing for AI agent workflows, with full multi-user and multi-session support. Track every LLM call, tool invocation, and agent decision in a persistent execution graph that you can explore, branch, and restore.
+AgentGit provides Git-like branching and checkpointing for AI agent workflows, with full multi-user and multi-session support. Track every LLM call, tool invocation, and agent decision in a persistent execution graph that you can explore, branch, and restore.
 
 ## Key Features
 
@@ -21,8 +21,8 @@ AgentGraph provides Git-like branching and checkpointing for AI agent workflows,
 
 ```bash
 # Clone the repository
-git clone https://github.com/rohithputha/agentgraph.git
-cd agentgraph
+git clone https://github.com/rohithputha/agentgit.git
+cd agentgit
 
 # Install dependencies
 pip install -r requirements.txt
@@ -34,10 +34,10 @@ export GOOGLE_API_KEY="your-api-key"
 ### Basic Usage
 
 ```python
-from core import AgentGraph
+from core import AgentGit
 
-# Initialize AgentGraph
-ag = AgentGraph(project_dir=".")
+# Initialize AgentGit
+ag = AgentGit(project_dir=".")
 
 # Create a session
 user_id = "alice"
@@ -76,7 +76,7 @@ ag.close()
 
 ### Sessions and Users
 
-AgentGraph supports **multi-user** and **multi-session** isolation:
+AgentGit supports **multi-user** and **multi-session** isolation:
 
 - **User ID**: Identifies different users (e.g., "alice", "bob")
 - **Session ID**: Identifies different conversation threads (e.g., "project-alpha", "debug-session")
@@ -85,7 +85,7 @@ Each (user_id, session_id) pair has its own isolated execution graph.
 
 ### Branches
 
-Like Git branches, AgentGraph branches let you explore different execution paths:
+Like Git branches, AgentGit branches let you explore different execution paths:
 
 ```python
 from tools.branch_tools import BranchTools
@@ -149,14 +149,14 @@ Checkpoints are stored as **git commits** in `.agentgit/checkpoints/` with full 
 
 ## API Reference
 
-### AgentGraph
+### AgentGit
 
 Main interface for execution tracking:
 
 ```python
-from core import AgentGraph
+from core import AgentGit
 
-ag = AgentGraph(project_dir=".", agit_dir=".agentgit")
+ag = AgentGit(project_dir=".", agit_dir=".agentgit")
 ```
 
 #### Session Management
@@ -427,9 +427,9 @@ See `requirements.txt` for full dependencies.
 ## Project Structure
 
 ```
-agentgraph/
+agentgit/
 ├── src/
-│   ├── core.py                    # AgentGraph main interface
+│   ├── core.py                    # AgentGit main interface
 │   ├── eventbus.py                # Event pub/sub system
 │   ├── event.py                   # Event types and dataclasses
 │   ├── tracer.py                  # Event → DAG node converter
@@ -471,7 +471,7 @@ agentgraph/
 
 ### Database locked
 
-- Close previous AgentGraph instances: `ag.close()`
+- Close previous AgentGit instances: `ag.close()`
 - SQLite doesn't support concurrent writes from multiple processes
 - Use separate sessions per user/process
 

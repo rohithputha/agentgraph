@@ -12,7 +12,7 @@ from event import Event, EventType
 from models.dag import ExecutionNode, ActionType, CallerType
 
 if TYPE_CHECKING:
-    from core import AgentGraph
+    from core import AgentGit
 
 
 def _generate_id() -> str:
@@ -25,7 +25,7 @@ class Tracer:
 
     def __init__(self, store: 'DagStore'):
         self.store = store
-        self.eventbus = None  # Will be set by AgentGraph
+        self.eventbus = None  # Will be set by AgentGit
         self.current_turn = 0
         
     def handle_event(self, event: Event):

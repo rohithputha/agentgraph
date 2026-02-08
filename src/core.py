@@ -1,11 +1,11 @@
 """
-AgentGraph Core - LangGraph-integrated interface for agent execution tracking.
+AgentGit Core - LangGraph-integrated interface for agent execution tracking.
 
 Usage:
-    from core import AgentGraph
+    from core import AgentGit
     
     # Initialize
-    ag = AgentGraph("/path/to/project")
+    ag = AgentGit("/path/to/project")
     
     # Get callback for LangGraph integration
     callback = ag.get_callback()
@@ -38,9 +38,9 @@ from models.dag import (
 )
 
 
-class AgentGraph:
+class AgentGit:
     """
-    Main interface for AgentGraph - integrates with LangGraph via callbacks.
+    Main interface for AgentGit - integrates with LangGraph via callbacks.
     
     This class initializes all storage components and provides:
     - LangGraph callback handler for automatic execution tracking
@@ -51,7 +51,7 @@ class AgentGraph:
 
     def __init__(self, project_dir: str, agit_dir: str = ".agentgit"):
         """
-        Initialize AgentGraph with project and storage directories.
+        Initialize AgentGit with project and storage directories.
         
         Args:
             project_dir: Path to the project being tracked
@@ -240,7 +240,7 @@ class AgentGraph:
 
 # ─── Quick Start Helper ────────────────────────────────────────────
 
-def init(project_dir: str = ".") -> AgentGraph:
+def init(project_dir: str = ".") -> AgentGit:
     """
     Quick initialization helper.
     
@@ -257,4 +257,4 @@ def init(project_dir: str = ".") -> AgentGraph:
         # Get callback for LangGraph (handles session context from config via configurable)
         callback = ag.get_callback()
     """
-    return AgentGraph(project_dir)
+    return AgentGit(project_dir)

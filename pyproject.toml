@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentgit"
+version = "0.1.0"
+authors = [
+    { name = "Rohith Putha", email = "rohithputha@gmail.com" }
+]
+description = "Multi-user DAG-based execution tracking and versioning for LangGraph agents"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["langchain", "langgraph", "agent", "dag", "versioning", "tracking", "llm", "ai"]
+
+dependencies = [
+    "langchain-core>=0.1.0",
+    "langgraph>=0.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+]
+examples = [
+    "langchain-google-genai>=0.0.1",
+    "langgraph-checkpoint>=0.0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/rohithputha/agentgit"
+Documentation = "https://github.com/rohithputha/agentgit#readme"
+Repository = "https://github.com/rohithputha/agentgit"
+Issues = "https://github.com/rohithputha/agentgit/issues"
+
+[tool.setuptools]
+packages = ["agentgit", "agentgit.models", "agentgit.storage", "agentgit.tools"]
+
+[tool.setuptools.package-dir]
+agentgit = "src"
+"agentgit.models" = "src/models"
+"agentgit.storage" = "src/storage"
+"agentgit.tools" = "src/tools"
+
+[tool.setuptools.package-data]
+"agentgit.storage" = ["*.sql"]
