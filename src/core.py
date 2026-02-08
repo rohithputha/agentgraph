@@ -32,8 +32,6 @@ from storage.checkpoint_store import CheckpointStore
 from eventbus import Eventbus
 from event import Event, EventType
 from tracer import Tracer
-from event import Event, EventType
-from tracer import Tracer
 # from langgraph_callback import langgraph_callback  <-- moved inside get_callback
 from models.dag import (
     ExecutionNode, Branch, ActionType, CallerType, BranchStatus, Checkpoint
