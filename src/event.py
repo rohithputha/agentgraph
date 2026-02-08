@@ -24,6 +24,8 @@ class Event:
     """Payload for every event in the system."""
     type: EventType
     timestamp: datetime = field(default_factory=datetime.now)
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
     run_id: Optional[str] = None
     content: Optional[str] = None
     text: Optional[str] = None 

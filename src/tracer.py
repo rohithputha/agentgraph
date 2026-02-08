@@ -22,14 +22,11 @@ def _generate_id() -> str:
 
 class Tracer:
     """Listens to events and creates DAG nodes for each action."""
-    
-    def __init__(self, agit: 'AgentGraph'):
-        self.eventbus = agit.eventbus
-        self.store = agit.dag_store
-        self.agit = agit
+
+    def __init__(self, store: 'DagStore'):
+        self.store = store
+        self.eventbus = None  # Will be set by AgentGraph
         self.current_turn = 0
-        self._seen_keys: set = set()  # For deduplication
-        self.eventbus.subscribe_all(self.handle_event)
         
     def handle_event(self, event: Event):
         handlers = {
@@ -53,14 +50,22 @@ class Tracer:
 
 
     def _on_user_input(self, event: Event):
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.USER_INPUT,
             triggered_by=CallerType.HUMAN_UI,
             content={"message": event.content},
         )
 
     def _on_llm_call_start(self, event: Event):
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.LLM_CALL,
             triggered_by=CallerType.SYSTEM,
             content={
@@ -70,7 +75,11 @@ class Tracer:
         )
 
     def _on_llm_call_end(self, event: Event):
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.LLM_RESPONSE,
             triggered_by=CallerType.SYSTEM,
             content={
@@ -87,44 +96,59 @@ class Tracer:
 
     def _on_stream_end(self, event: Event):
         """Handle stream end - create node with full response."""
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.LLM_RESPONSE,
             triggered_by=CallerType.SYSTEM,
             content={"response": event.content, "streamed": True},
         )
 
     def _on_llm_error(self, event: Event):
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.LLM_ERROR,
             triggered_by=CallerType.SYSTEM,
             content={"error": event.error, "model": event.model},
         )
 
     def _on_thinking(self, event: Event):
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.LLM_RESPONSE,
             triggered_by=CallerType.SYSTEM,
             content={"stage": "thinking", "reasoning": event.content},
         )
 
     def _on_tool_call_start(self, event: Event):
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.TOOL_CALL,
             triggered_by=CallerType.AGENT_TOOL,
             content={
                 "tool": event.tool_name,
                 "args": event.tool_args,
-                "tool_call_id": event.metadata.get("tool_call_id"),
+                "tool_call_id": event.metadata.get("tool_call_id") if event.metadata else None,
             },
         )
 
     def _on_tool_call_end(self, event: Event):
-        dedup_key = f"{event.tool_name}:{event.content}"
-        if self._is_duplicate(dedup_key):
-            return
-        self._mark_seen(dedup_key)
-
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.TOOL_RESULT,
             triggered_by=CallerType.AGENT_TOOL,
             content={
@@ -136,7 +160,11 @@ class Tracer:
         )
 
     def _on_tool_error(self, event: Event):
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.TOOL_ERROR,
             triggered_by=CallerType.AGENT_TOOL,
             content={"tool": event.tool_name, "error": event.error},
@@ -146,31 +174,32 @@ class Tracer:
         self.current_turn += 1
 
     def _on_turn_end(self, event: Event):
+        user_id = event.user_id or "default"
+        session_id = event.session_id or "default"
         self._create_node(
+            user_id=user_id,
+            session_id=session_id,
             action_type=ActionType.AGENT_TURN_END,
             triggered_by=CallerType.SYSTEM,
             content={},
         )
 
-    # ─── Deduplication Helpers ─────────────────────────────────────
-
-    def _is_duplicate(self, key: str) -> bool:
-        return key in self._seen_keys
-
-    def _mark_seen(self, key: str):
-        self._seen_keys.add(key)
-
     # ─── Node Creation ─────────────────────────────────────────────
 
-    def _create_node(self, action_type: ActionType, triggered_by: CallerType, content: dict) -> ExecutionNode:
-        # Skip if no active branch
-        if not self.agit.current_branch_id:
-            return None
-            
+    def _create_node(self, user_id: str, session_id: str, action_type: ActionType, triggered_by: CallerType, content: dict) -> ExecutionNode:
+        """Create node using session context from event (stateless!)."""
+        # Query DB for active branch for this session
+        branch = self.store.get_active_branch(user_id, session_id)
+        if not branch:
+            return None  # No active branch for this session
+
+        parent_id = branch.head_node_id
+
         node = ExecutionNode(
+            user_id=user_id,
+            session_id=session_id,
             id=_generate_id(),
-            parent_id=str(self.agit.current_node_id) if self.agit.current_node_id else None,
-            thread_id=self.agit.current_thread_id or "main",
+            parent_id=parent_id,
             action_type=action_type,
             content=content,
             triggered_by=triggered_by,
@@ -180,9 +209,7 @@ class Tracer:
             duration_ms=content.get("duration_ms", 0),
             token_count=None,
         )
-        new_node_id = self.store.insert_node(node)
-        self.agit.current_node_id = new_node_id
-        if self.agit.current_branch_id:
-            self.store.update_branch_head(self.agit.current_branch_id, new_node_id)
+        new_node_id = self.store.insert_node(user_id, session_id, node, branch.branch_id)
+        self.store.update_branch_head(user_id, session_id, branch.branch_id, new_node_id)
         return node
     

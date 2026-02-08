@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS nodes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,                
     parent_id INTEGER,                     
     branch_id INTEGER NOT NULL,
+    user_id Text NOT NULL,
+    session_id Text NOT NULL,
+    checkpoint_sha TEXT,
     action_type TEXT NOT NULL,          
     content TEXT NOT NULL,              
     triggered_by TEXT NOT NULL,         
@@ -19,7 +22,10 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 CREATE TABLE IF NOT EXISTS branches (
     branch_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,              
+    name TEXT NOT NULL,
+    user_id Text NOT NULL,
+    session_id Text NOT NULL,
+                  
     head_node_id INTEGER,        
     base_node_id INTEGER,
     status TEXT NOT NULL,              
@@ -32,7 +38,8 @@ CREATE TABLE IF NOT EXISTS branches (
     time_elapsed_seconds REAL DEFAULT 0.0,
 
     FOREIGN KEY (head_node_id) REFERENCES nodes(id),
-    FOREIGN KEY (base_node_id) REFERENCES nodes(id)
+    FOREIGN KEY (base_node_id) REFERENCES nodes(id),
+    UNIQUE(user_id, session_id, name)
 );
 
 
@@ -53,6 +60,14 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 -- Indexes for Performance
 -- ═══════════════════════════════════════════════════════════════
 
+-- Query nodes by session
+CREATE INDEX IF NOT EXISTS idx_nodes_session
+ON nodes(user_id, session_id);
+
+-- Query checkpoints by session
+CREATE INDEX IF NOT EXISTS idx_nodes_checkpoint
+ON nodes(user_id, session_id, checkpoint_sha) WHERE checkpoint_sha IS NOT NULL;
+
 -- Query nodes by branch
 CREATE INDEX IF NOT EXISTS idx_nodes_branch
 ON nodes(branch_id);
@@ -64,6 +79,10 @@ ON nodes(parent_id);
 -- Query nodes by time range
 CREATE INDEX IF NOT EXISTS idx_nodes_timestamp
 ON nodes(timestamp);
+
+-- Query branches by session
+CREATE INDEX IF NOT EXISTS idx_branches_session
+ON branches(user_id, session_id);
 
 -- Filter branches by status
 CREATE INDEX IF NOT EXISTS idx_branches_status
