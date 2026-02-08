@@ -10,8 +10,7 @@ class GitBackend:
     stores only deltas between them.
     """
 
-    def __init__(self, project_dir: Path, git_dir: Path):
-        self.project_dir = project_dir
+    def __init__(self, git_dir: Path):
         self.git_dir = git_dir
         if not (git_dir/ "HEAD").exists():
             self._init_bare_repo()
@@ -24,6 +23,7 @@ class GitBackend:
         )
 
     def _create_blob(self, file_path: Path) -> str:
+        """Hash a file and store it in the object database."""
         return self._run(["hash-object", "-w", str(file_path)]).stdout.strip()
 
     def _run(
@@ -71,14 +71,7 @@ class GitBackend:
             node[parts[-1]] = sha
         return self._write_tree(root)
 
-    def _get_last_snapshot(self) -> Optional[str]:
-        ref = self.git_dir / "refs" / "heads" / "snapshots"
-        return ref.read_text().strip() if ref.exists() else None
-    
-    def _set_last_snapshot(self, commit_sha: str):
-        """Record this commit as the latest snapshot so the next one
-        chains off it (enabling git delta storage)."""
-        self._run(["update-ref", "refs/heads/snapshots", commit_sha])
+    # _get_last_snapshot and _set_last_snapshot removed (stateless)
 
     def _create_commit(self, tree_sha: str, message: str, parent: Optional[str] = None) -> str:
         cmd = ["commit-tree", tree_sha, "-m", message]
@@ -95,36 +88,47 @@ class GitBackend:
         }
         return self._run(cmd, env=env).stdout.strip()
 
-    def create_snapshot(self, message: str = "Checkpoint"):
-        """Snapshot all tracked project files. Returns the commit SHA."""
-        blob_sha: dict[str, str] = {}
-        for path in self._get_tracked_files():
-            rel = str(path.relative_to(self.project_dir))
-            blob_sha[rel] = self._create_blob(path)
+    def create_commit(self, workspace: Path, parent_sha: Optional[str], message: str) -> str:
+        """Create a commit from the workspace state. Parent SHA provided by caller."""
+        blob_shas: dict[str, str] = {}
+        for path in self._get_tracked_files(workspace):
+            rel = str(path.relative_to(workspace))
+            blob_shas[rel] = self._create_blob(path)
         
-        tree_sha = self._build_tree(blob_sha)
-        
-        parent = self._get_last_snapshot()
-        commit_sha = self._create_commit(tree_sha, message, parent)
-        self._set_last_snapshot(commit_sha)
+        tree_sha = self._build_tree(blob_shas)
+        commit_sha = self._create_commit(tree_sha, message, parent_sha)
         return commit_sha
     
-    def restore_snapshot(self, commit_sha: str):
-        self._run(["read-tree", commit_sha])
-        # materialise index → project working directory
+    def restore_commit(self, commit_sha: str, workspace: Path):
+        """Restore a commit to the specified workspace."""
+        # 1. Read tree into index (using a temporary index file to avoid locking issues if possible, 
+        # but for now we'll use the default index with GIT_WORK_TREE)
+        
+        # We need to be careful about index locking if multiple sessions run in parallel.
+        # For a robust stateless implementation, we should probably use a temporary index file per operation.
+        index_file = self.git_dir / f"index_{os.getpid()}_{id(workspace)}"
+        
         env = {
             **os.environ,
             "GIT_DIR": str(self.git_dir),
-            "GIT_WORK_TREE": str(self.project_dir),
+            "GIT_WORK_TREE": str(workspace),
+            "GIT_INDEX_FILE": str(index_file),
         }
+        
+        self._run(["read-tree", commit_sha], env=env)
+        
         subprocess.run(
             ["git", "checkout-index", "-a", "-f"],
             env=env,
-            cwd=self.project_dir,
+            cwd=workspace,
             check=True,
             capture_output=True,
             text=True,
         )
+        
+        # Cleanup temp index
+        if index_file.exists():
+            index_file.unlink()
 
     def get_snapshot_files(self, commit_sha: str) -> List[str]:
         """Return the list of file paths recorded in a snapshot."""
@@ -132,14 +136,15 @@ class GitBackend:
         text = result.stdout.strip()
         return text.split("\n") if text else []
     
-    def _get_tracked_files(self) -> List[Path]:
-        """Get all files in the project directory (excluding .agentgit and common ignores)."""
+    def _get_tracked_files(self, workspace: Path) -> List[Path]:
+        """Get all files in the workspace (excluding .agentgit and common ignores)."""
         tracked = []
         ignore_patterns = {'.agentgit', '.git', '__pycache__', 'node_modules'}
         ignore_suffixes = {'.pyc', '.DS_Store'}
         
-        for path in self.project_dir.rglob('*'):
+        for path in workspace.rglob('*'):
             if path.is_file():
+                # Skip if path is inside git_dir (if git_dir is inside workspace)
                 try:
                     path.relative_to(self.git_dir)
                     continue
