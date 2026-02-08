@@ -133,8 +133,8 @@ class langgraph_callback(BaseCallbackHandler):
         run = self._runs.get(run_id, {})
 
         if self.eventbus:
-            self.eventbus.publish(EventType.LLM_CALL_ERROR, Event(
-                type=EventType.LLM_CALL_ERROR,
+            self.eventbus.publish(EventType.LLM_ERROR, Event(
+                type=EventType.LLM_ERROR,
                 run_id=str(run_id),
                 model=run.get("model", "unknown"),
                 error=str(error),
@@ -185,10 +185,10 @@ class langgraph_callback(BaseCallbackHandler):
 
     def on_tool_error(self, error: Exception, *, run_id: str, **kwargs):
         run = self._tool_runs.pop(run_id, {})
-        
+
         if self.eventbus:
-            self.eventbus.publish(EventType.TOOL_CALL_ERROR, Event(
-                type=EventType.TOOL_CALL_ERROR,
+            self.eventbus.publish(EventType.TOOL_ERROR, Event(
+                type=EventType.TOOL_ERROR,
                 run_id=str(run_id),
                 tool_name=run.get("name", "unknown"),
                 error=str(error),
