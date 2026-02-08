@@ -184,13 +184,15 @@ class DagStore:
         self.conn.execute(
             """INSERT INTO checkpoints (
                 hash, node_id, filesystem_ref, files_changed,
-                created_at, compressed, size_bytes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                memory, history, created_at, compressed, size_bytes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 checkpoint.hash,
                 node_id,
                 checkpoint.filesystem_ref,
                 json.dumps(checkpoint.files_changed),
+                json.dumps(checkpoint.agent_memory),
+                json.dumps(checkpoint.conversation_history),
                 int(checkpoint.created_at.timestamp()),
                 1 if checkpoint.compressed else 0,
                 checkpoint.size_bytes,

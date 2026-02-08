@@ -211,6 +211,9 @@ class AgentGraph:
            # Update branch head!
            self.dag_store.update_branch_head(user_id, session_id, branch.branch_id, new_id)
 
+           # 3. Persist checkpoint metadata to database
+           self.dag_store.insert_checkpoint(checkpoint, new_id)
+
         return checkpoint
 
     def restore(self, checkpoint: Checkpoint):
