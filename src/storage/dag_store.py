@@ -25,7 +25,7 @@ class DagStore:
 
     # ─── Nodes ────────────────────────────────────────────────────
 
-    def insert_node(self, user_id: str, session_id: str, node: ExecutionNode) -> int:
+    def insert_node(self, user_id: str, session_id: str, node: ExecutionNode, branch_id: int) -> int:
         """Insert node and return the auto-generated INTEGER id."""
         cursor = self.conn.execute(
             """INSERT INTO nodes (
@@ -37,7 +37,7 @@ class DagStore:
                 user_id,
                 session_id,
                 int(node.parent_id) if node.parent_id else None,
-                self._get_branch_id_from_thread_id(user_id, session_id, node.thread_id),
+                branch_id,
                 node.checkpoint_sha,
                 node.action_type.value,
                 json.dumps(node.content),
@@ -230,43 +230,27 @@ class DagStore:
         ).fetchall()
         return rows
 
-    # ─── Helper Methods ───────────────────────────────────────────
-
-    def _get_branch_id_from_thread_id(self, user_id: str, session_id: str, thread_id: str) -> Optional[int]:
-        """Map thread_id to branch_id for a specific session."""
-        row = self.conn.execute(
-            "SELECT branch_id FROM branches WHERE user_id = ? AND session_id = ? AND name = ?",
-            (user_id, session_id, thread_id)
-        ).fetchone()
-        return row[0] if row else None
-
     # ─── Row → dataclass ──────────────────────────────────────────
 
     def _row_to_node(self, row) -> ExecutionNode:
-        """Map database row to ExecutionNode. 
+        """Map database row to ExecutionNode.
         Schema: id, parent_id, branch_id, user_id, session_id, checkpoint_sha,
-                action_type, content, triggered_by, caller_context, state_hash, 
+                action_type, content, triggered_by, caller_context, state_hash,
                 timestamp, duration_ms, token_count
         """
         # Schema indices after our changes:
         # 0:id, 1:parent_id, 2:branch_id, 3:user_id, 4:session_id, 5:checkpoint_sha,
         # 6:action_type, 7:content, 8:triggered_by, 9:caller_context, 10:state_hash,
         # 11:timestamp, 12:duration_ms, 13:token_count
-       
+
         user_id = row[3]
         session_id = row[4]
-        branch_id = row[2]
-        
-        # Get thread_id from branch for backward compatibility
-        branch = self.get_branch_by_id(branch_id)
-        thread_id = branch.thread_id if branch else str(branch_id)
-        
+
         return ExecutionNode(
             user_id=user_id,
             session_id=session_id,
             id=str(row[0]),
             parent_id=str(row[1]) if row[1] else None,
-            thread_id=thread_id,
             checkpoint_sha=row[5],
             action_type=ActionType(row[6]),
             content=json.loads(row[7]),
@@ -279,7 +263,7 @@ class DagStore:
         )
 
     def _row_to_branch(self, row) -> Branch:
-        """Map database row to Branch. 
+        """Map database row to Branch.
         Schema: branch_id, name, user_id, session_id, head_node_id, base_node_id,
                 status, intent, status_reason, created_by, created_at, tokens_used, time_elapsed_seconds
         """
@@ -287,10 +271,10 @@ class DagStore:
         # 0:branch_id, 1:name, 2:user_id, 3:session_id, 4:head_node_id, 5:base_node_id,
         # 6:status, 7:intent, 8:status_reason, 9:created_by, 10:created_at, 11:tokens_used, 12:time_elapsed_seconds
         branch = Branch(
+            branch_id=row[0],
             user_id=row[2],
             session_id=row[3],
             name=row[1],
-            thread_id=row[1],  # Use name as thread_id for backward compatibility
             head_node_id=str(row[4]) if row[4] else None,
             base_node_id=str(row[5]) if row[5] else None,
             status=BranchStatus(row[6]),

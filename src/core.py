@@ -32,7 +32,9 @@ from storage.checkpoint_store import CheckpointStore
 from eventbus import Eventbus
 from event import Event, EventType
 from tracer import Tracer
-from langgraph_callback import langgraph_callback
+from event import Event, EventType
+from tracer import Tracer
+# from langgraph_callback import langgraph_callback  <-- moved inside get_callback
 from models.dag import (
     ExecutionNode, Branch, ActionType, CallerType, BranchStatus, Checkpoint
 )
@@ -66,19 +68,18 @@ class AgentGraph:
         # Initialize core components
         self.eventbus = Eventbus()
         self.dag_store = DagStore(str(self.agit_path / "dag.sqlite"))
-        self.checkpoint_store = CheckpointStore(self.agit_path, self.project_dir)
+        self.checkpoint_store = CheckpointStore(self.agit_path, self.project_dir, self.dag_store)
         
         # Initialize tracer (subscribes to eventbus and records nodes)
-        self._tracer = Tracer(self)
+        self._tracer = Tracer(self.dag_store)
+        self._tracer.eventbus = self.eventbus
+        self.eventbus.subscribe_all(self._tracer.handle_event)
         
-        # Track current state
-        self.current_node_id: Optional[int] = None
-        self.current_branch_id: Optional[int] = None
-        self.current_thread_id: Optional[str] = None
+        # Stateless! No current_node_id, current_branch_id, etc.
 
     # ─── LangGraph Integration ─────────────────────────────────────
 
-    def get_callback(self) -> langgraph_callback:
+    def get_callback(self) -> 'langgraph_callback':
         """
         Get the LangGraph callback handler for automatic tracking.
         
@@ -87,6 +88,7 @@ class AgentGraph:
             callback = ag.get_callback()
             app.invoke(input, config={"callbacks": [callback]})
         """
+        from langgraph_callback import langgraph_callback
         return langgraph_callback(self.eventbus)
 
     # ─── Event Subscription ────────────────────────────────────────
@@ -103,12 +105,14 @@ class AgentGraph:
         """Manually emit an event (e.g., for user input)."""
         self.eventbus.publish(event_type, event)
 
-    def emit_user_input(self, message: str, metadata: Optional[dict] = None):
+    def emit_user_input(self, user_id: str, session_id: str, message: str, metadata: Optional[dict] = None):
         """Convenience method to emit a user input event."""
         self.eventbus.publish(
             EventType.USER_INPUT,
             Event(
                 type=EventType.USER_INPUT,
+                user_id=user_id,
+                session_id=session_id,
                 content=message,
                 metadata=metadata or {},
                 timestamp=datetime.now(),
@@ -119,14 +123,17 @@ class AgentGraph:
 
     def create_branch(
         self,
+        user_id: str,
+        session_id: str,
         name: str,
         intent: str = "",
         base_node_id: Optional[int] = None,
     ) -> int:
-        """Create a new branch and set it as current. Returns branch ID."""
+        """Create a new branch for a session. Returns branch ID."""
         branch = Branch(
+            user_id=user_id,
+            session_id=session_id,
             name=name,
-            thread_id=name,
             head_node_id=str(base_node_id) if base_node_id else "0",
             base_node_id=str(base_node_id) if base_node_id else "0",
             status=BranchStatus.ACTIVE,
@@ -134,64 +141,79 @@ class AgentGraph:
             created_by=CallerType.SYSTEM,
             created_at=datetime.now(),
         )
-        branch_id = self.dag_store.insert_branch(branch)
-        self.current_branch_id = branch_id
-        self.current_thread_id = name
-        self.current_node_id = base_node_id
+        branch_id = self.dag_store.insert_branch(user_id, session_id, branch)
         return branch_id
 
-    def switch_branch(self, name: str) -> bool:
-        """Switch to an existing branch by name."""
-        branch = self.dag_store.get_branch(name)
-        if branch:
-            row = self.dag_store.conn.execute(
-                "SELECT branch_id, head_node_id FROM branches WHERE name = ?", (name,)
-            ).fetchone()
-            if row:
-                self.current_branch_id = row[0]
-                self.current_thread_id = name
-                self.current_node_id = row[1]
-                return True
-        return False
+    # switch_branch is removed as it's a stateful operation. 
+    # Frontend/Client should manage which branch is active by name.
+    
+    def list_branches(self, user_id: str, session_id: str, status: Optional[BranchStatus] = None) -> List[Branch]:
+        """List all branches for a session, optionally filtered by status."""
+        return self.dag_store.list_branches(user_id, session_id, status)
 
-    def list_branches(self, status: Optional[BranchStatus] = None) -> List[Branch]:
-        """List all branches, optionally filtered by status."""
-        return self.dag_store.list_branches(status)
+    # list_branches duplicate removed
 
     # ─── Node Operations ───────────────────────────────────────────
 
-    def peek(self, node_id: int) -> Optional[dict]:
+    def peek(self, user_id: str, session_id: str, node_id: int) -> Optional[dict]:
         """Peek at the memory (content) for a given node number."""
-        return self.dag_store.peek(node_id)
+        return self.dag_store.peek(user_id, session_id, node_id)
 
-    def get_node(self, node_id: int) -> Optional[ExecutionNode]:
+    def get_node(self, user_id: str, session_id: str, node_id: int) -> Optional[ExecutionNode]:
         """Get full node details by ID."""
-        return self.dag_store.get_node(node_id)
+        return self.dag_store.get_node(user_id, session_id, node_id)
 
-    def get_history(self, node_id: int) -> List[ExecutionNode]:
+    def get_history(self, user_id: str, session_id: str, node_id: int) -> List[ExecutionNode]:
         """Get the path from root to a given node."""
-        return self.dag_store.get_path_to_root(node_id)
+        return self.dag_store.get_path_to_root(user_id, session_id, node_id)
 
-    def get_branch_nodes(self, branch_id: Optional[int] = None) -> List[ExecutionNode]:
-        """Get all nodes in a branch. Uses current branch if not specified."""
-        bid = branch_id or self.current_branch_id
-        if not bid:
-            return []
-        return self.dag_store.get_branch_nodes(bid)
+    def get_branch_nodes(self, user_id: str, session_id: str, branch_id: int) -> List[ExecutionNode]:
+        """Get all nodes in a branch."""
+        return self.dag_store.get_branch_nodes(user_id, session_id, branch_id)
 
     # ─── Checkpoint Operations ─────────────────────────────────────
 
     def checkpoint(
         self,
+        user_id: str,
+        session_id: str,
         name: str,
         agent_memory: dict,
         conversation_history: list,
         label: str = "Checkpoint",
     ) -> Checkpoint:
         """Create a checkpoint of current state."""
-        return self.checkpoint_store.create_checkpoint(
-            name, agent_memory, conversation_history, label
+        # 1. Create checkpoint logic (git commit, etc.)
+        checkpoint = self.checkpoint_store.create_checkpoint(
+            user_id, session_id, name, agent_memory, conversation_history, label
         )
+
+        # 2. Record checkpoint as a Node in the DAG
+        # We need to find the parent node for this session to link it in the DAG
+        # Similar logic to Tracer._create_node
+        branch = self.dag_store.get_active_branch(user_id, session_id)
+        if branch:
+           parent_id = branch.head_node_id
+           node = ExecutionNode(
+                user_id=user_id,
+                session_id=session_id,
+                id="0", # Auto-generated
+                parent_id=parent_id,
+                checkpoint_sha=checkpoint.filesystem_ref, # Store git SHA!
+                action_type=ActionType.CHECKPOINT,
+                content={"label": label},
+                triggered_by=CallerType.SYSTEM,
+                caller_context={},
+                state_hash=checkpoint.hash,
+                timestamp=datetime.now(),
+                duration_ms=0,
+                token_count=0
+           )
+           new_id = self.dag_store.insert_node(user_id, session_id, node, branch.branch_id)
+           # Update branch head!
+           self.dag_store.update_branch_head(user_id, session_id, branch.branch_id, new_id)
+
+        return checkpoint
 
     def restore(self, checkpoint: Checkpoint):
         """Restore from a checkpoint."""
@@ -204,12 +226,9 @@ class AgentGraph:
         """Access to underlying DAG store (for Tracer compatibility)."""
         return self.dag_store
 
-    @property
-    def current_branch(self) -> Optional[Branch]:
-        """Get the current active branch."""
-        if self.current_branch_id:
-            return self.dag_store.get_branch_by_id(self.current_branch_id)
-        return None
+    def get_active_branch(self, user_id: str, session_id: str) -> Optional[Branch]:
+        """Get the current active branch for a session."""
+        return self.dag_store.get_active_branch(user_id, session_id)
 
     # ─── Lifecycle ─────────────────────────────────────────────────
 
@@ -228,16 +247,13 @@ def init(project_dir: str = ".") -> AgentGraph:
         from core import init
         
         ag = init()
-        ag.create_branch("main")
+        # Session context is required for operations
+        user_id = "default"
+        session_id = "test-session"
         
-        # Get callback for LangGraph
+        ag.create_branch(user_id, session_id, "main")
+        
+        # Get callback for LangGraph (handles session context from config via configurable)
         callback = ag.get_callback()
-        
-        # Use with your LangGraph app
-        app.invoke({"input": "Hello"}, config={"callbacks": [callback]})
-        
-        # Check recorded nodes
-        for node in ag.get_branch_nodes():
-            print(ag.peek(int(node.id)))
     """
     return AgentGraph(project_dir)

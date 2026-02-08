@@ -40,9 +40,6 @@ class ExecutionNode:
     session_id: str
     id: str
     parent_id: Optional[str]
-    thread_id: str
-    checkpoint_sha: Optional[str] = None
-
     action_type: ActionType
     content: dict
 
@@ -54,6 +51,8 @@ class ExecutionNode:
     duration_ms: int
     token_count: Optional[int]
 
+    checkpoint_sha: Optional[str] = None
+
 
 @dataclass
 class Branch:
@@ -61,7 +60,6 @@ class Branch:
     user_id: str
     session_id: str
     name: str
-    thread_id: str
     head_node_id: str
     base_node_id: str
 
@@ -73,6 +71,8 @@ class Branch:
 
     tokens_used: int = 0
     time_elapsed_seconds: float = 0.0
+
+    branch_id: Optional[int] = None
 
 
 @dataclass
