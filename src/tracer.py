@@ -22,12 +22,11 @@ def _generate_id() -> str:
 
 class Tracer:
     """Listens to events and creates DAG nodes for each action."""
-    
+
     def __init__(self, store: 'DagStore'):
         self.store = store
         self.eventbus = None  # Will be set by AgentGraph
         self.current_turn = 0
-        self._seen_keys: set = set()  # For deduplication
         
     def handle_event(self, event: Event):
         handlers = {
@@ -145,11 +144,6 @@ class Tracer:
         )
 
     def _on_tool_call_end(self, event: Event):
-        dedup_key = f"{event.tool_name}:{event.content}"
-        if self._is_duplicate(dedup_key):
-            return
-        self._mark_seen(dedup_key)
-
         user_id = event.user_id or "default"
         session_id = event.session_id or "default"
         self._create_node(
@@ -189,14 +183,6 @@ class Tracer:
             triggered_by=CallerType.SYSTEM,
             content={},
         )
-
-    # ─── Deduplication Helpers ─────────────────────────────────────
-
-    def _is_duplicate(self, key: str) -> bool:
-        return key in self._seen_keys
-
-    def _mark_seen(self, key: str):
-        self._seen_keys.add(key)
 
     # ─── Node Creation ─────────────────────────────────────────────
 
