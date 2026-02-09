@@ -2,13 +2,13 @@
 
 Your AI agent tried 3 approaches and failed. Which one almost worked?
 AgentGit tracks every execution path so you can branch, compare, and
-rollback — like git, but for agent runs.
+rollback like git, but for agent runs.
 
 ```
 pip install agentgit
 ```
 
-[GIF: agent branching and comparing two approaches]
+
 
 ---
 
