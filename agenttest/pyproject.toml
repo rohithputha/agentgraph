@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agenttest"
+version = "0.1.0"
+authors = [
+    { name = "Rohith Putha", email = "rohithputha@gmail.com" }
+]
+description = "Record-replay regression testing framework for AI agents"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["testing", "ai", "agent", "regression", "llm", "record-replay"]
+
+# Core package has zero mandatory dependencies - only click for CLI
+dependencies = [
+    "click>=8.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+]
+interceptors = [
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+]
+semantic = [
+    "sentence-transformers>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/rohithputha/agentgit"
+Documentation = "https://github.com/rohithputha/agentgit#readme"
+Repository = "https://github.com/rohithputha/agentgit"
+Issues = "https://github.com/rohithputha/agentgit/issues"
+
+[project.scripts]
+agenttest = "agenttest.cli.main:cli"
+
+[project.entry-points.pytest11]
+agenttest = "agenttest.pytest_plugin.plugin"
+
+[tool.setuptools]
+packages = [
+    "agenttest",
+    "agenttest.models",
+    "agenttest.storage",
+    "agenttest.interceptors",
+    "agenttest.pytest_plugin",
+    "agenttest.cli",
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.package-data]
+"agenttest.storage" = ["*.sql"]
