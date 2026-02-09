@@ -52,10 +52,10 @@ Issues = "https://github.com/rohithputha/agentgit/issues"
 packages = ["agentgit", "agentgit.models", "agentgit.storage", "agentgit.tools"]
 
 [tool.setuptools.package-dir]
-agentgit = "src"
-"agentgit.models" = "src/models"
-"agentgit.storage" = "src/storage"
-"agentgit.tools" = "src/tools"
+agentgit = "agentgit"
+"agentgit.models" = "agentgit/models"
+"agentgit.storage" = "agentgit/storage"
+"agentgit.tools" = "agentgit/tools"
 
 [tool.setuptools.package-data]
 "agentgit.storage" = ["*.sql"]

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional, List
 from datetime import datetime
 
-from models.dag import (
+from ..models.dag import (
     ExecutionNode, Branch, ActionType, CallerType, BranchStatus, Checkpoint,
 )
 

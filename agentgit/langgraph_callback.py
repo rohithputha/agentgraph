@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional, Union
 from langchain_core.messages import BaseMessage
 from langchain_core.callbacks import BaseCallbackHandler
 
-from eventbus import Eventbus
-from event import Event, EventType
+from .eventbus import Eventbus
+from .event import Event, EventType
 class langgraph_callback(BaseCallbackHandler):
     def __init__(self, eventbus):
         super().__init__()

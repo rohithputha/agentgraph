@@ -1,5 +1,5 @@
 from typing import Optional, List
-from models.dag import Checkpoint
+from ..models.dag import Checkpoint
 
 
 class VersionTools:

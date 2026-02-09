@@ -4,9 +4,9 @@ import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
-from storage.git_backend import GitBackend
-from models.dag import Checkpoint
-from storage.dag_store import DagStore
+from .git_backend import GitBackend
+from ..models.dag import Checkpoint
+from .dag_store import DagStore
 
 
 class CheckpointStore:

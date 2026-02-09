@@ -1,6 +1,6 @@
 from typing import Callable
 
-from event import EventType, Event
+from .event import EventType, Event
 class Eventbus:
     def __init__(self):
         self._subscribers = {}

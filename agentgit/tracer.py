@@ -7,9 +7,9 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from eventbus import Eventbus
-from event import Event, EventType
-from models.dag import ExecutionNode, ActionType, CallerType
+from .eventbus import Eventbus
+from .event import Event, EventType
+from .models.dag import ExecutionNode, ActionType, CallerType
 
 if TYPE_CHECKING:
     from core import AgentGit
