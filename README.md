@@ -1,5 +1,17 @@
 # AgentGit
 
+Your AI agent tried 3 approaches and failed. Which one almost worked?
+AgentGit tracks every execution path so you can branch, compare, and
+rollback — like git, but for agent runs.
+
+```
+pip install agentgit
+```
+
+[GIF: agent branching and comparing two approaches]
+
+---
+
 **Multi-user DAG-based execution tracking and versioning for LangGraph agents**
 
 AgentGit provides Git-like branching and checkpointing for AI agent workflows, with full multi-user and multi-session support. Track every LLM call, tool invocation, and agent decision in a persistent execution graph that you can explore, branch, and restore.
