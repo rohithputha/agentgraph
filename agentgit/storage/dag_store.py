@@ -26,7 +26,12 @@ class DagStore:
     # ─── Nodes ────────────────────────────────────────────────────
 
     def insert_node(self, user_id: str, session_id: str, node: ExecutionNode, branch_id: int) -> int:
-        """Insert node and return the auto-generated INTEGER id."""
+        """
+        Insert node and return the auto-generated INTEGER id.
+
+        Note: Does NOT commit. Called during event processing where
+        eventbus manages the transaction boundary.
+        """
         cursor = self.conn.execute(
             """INSERT INTO nodes (
                 user_id, session_id, parent_id, branch_id, checkpoint_sha,
@@ -49,7 +54,6 @@ class DagStore:
                 node.token_count,
             ),
         )
-        self.conn.commit()
         return cursor.lastrowid
 
     def get_node(self, user_id: str, session_id: str, node_id: int) -> Optional[ExecutionNode]:
@@ -160,13 +164,17 @@ class DagStore:
         return self._row_to_branch(row) if row else None
 
     def update_branch_head(self, user_id: str, session_id: str, branch_id: int, new_head_id: int):
-        """Update branch head."""
+        """
+        Update branch head.
+
+        Note: Does NOT commit. Called during event processing where
+        eventbus manages the transaction boundary.
+        """
         self.conn.execute(
-            """UPDATE branches SET head_node_id = ? 
+            """UPDATE branches SET head_node_id = ?
                WHERE user_id = ? AND session_id = ? AND branch_id = ?""",
             (new_head_id, user_id, session_id, branch_id),
         )
-        self.conn.commit()
 
     def update_branch_status(self, user_id: str, session_id: str, branch_id: int, status: BranchStatus, reason: Optional[str] = None):
         """Update branch status and optional status_reason."""

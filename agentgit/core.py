@@ -62,12 +62,13 @@ class AgentGit:
         
         # Create .agentgit directory if it doesn't exist
         self.agit_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize core components
-        self.eventbus = Eventbus()
+        # Note: dag_store must be created before eventbus to pass connection
         self.dag_store = DagStore(str(self.agit_path / "dag.sqlite"))
+        self.eventbus = Eventbus(conn=self.dag_store.conn)
         self.checkpoint_store = CheckpointStore(self.agit_path, self.project_dir, self.dag_store)
-        
+
         # Initialize tracer (subscribes to eventbus and records nodes)
         self._tracer = Tracer(self.dag_store)
         self._tracer.eventbus = self.eventbus
