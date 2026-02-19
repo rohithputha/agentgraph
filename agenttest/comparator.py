@@ -42,7 +42,7 @@ class Comparison:
         overall_pass = mismatched_steps == 0 and added_steps == 0 and removed_steps == 0
 
         return ComparisonResult(
-            comparison_id=f"cmp_{hashlib.sha256(str(baseline_details[0].recording_id).encode()).hexdigest()[:12]}",
+            comparison_id=f"cmp_{hashlib.sha256((str(baseline_details[0].recording_id if baseline_details else '') + ':' + str(replay_details[0].recording_id if replay_details else '')).encode()).hexdigest()[:12]}",
             baseline_recording_id=baseline_details[0].recording_id if baseline_details else "",
             replay_recording_id=replay_details[0].recording_id if replay_details else "",
             overall_pass=overall_pass,
