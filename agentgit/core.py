@@ -27,13 +27,13 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Callable
 
-from storage.dag_store import DagStore
-from storage.checkpoint_store import CheckpointStore
-from eventbus import Eventbus
-from event import Event, EventType
-from tracer import Tracer
+from .storage.dag_store import DagStore
+from .storage.checkpoint_store import CheckpointStore
+from .eventbus import Eventbus
+from .event import Event, EventType
+from .tracer import Tracer
 # from langgraph_callback import langgraph_callback  <-- moved inside get_callback
-from models.dag import (
+from .models.dag import (
     ExecutionNode, Branch, ActionType, CallerType, BranchStatus, Checkpoint
 )
 
@@ -62,12 +62,13 @@ class AgentGit:
         
         # Create .agentgit directory if it doesn't exist
         self.agit_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize core components
-        self.eventbus = Eventbus()
+        # Note: dag_store must be created before eventbus to pass connection
         self.dag_store = DagStore(str(self.agit_path / "dag.sqlite"))
+        self.eventbus = Eventbus(conn=self.dag_store.conn)
         self.checkpoint_store = CheckpointStore(self.agit_path, self.project_dir, self.dag_store)
-        
+
         # Initialize tracer (subscribes to eventbus and records nodes)
         self._tracer = Tracer(self.dag_store)
         self._tracer.eventbus = self.eventbus

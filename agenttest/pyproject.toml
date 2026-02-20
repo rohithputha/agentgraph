@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentgit"
+name = "agenttest"
 version = "0.1.0"
 authors = [
     { name = "Rohith Putha", email = "rohithputha@gmail.com" }
 ]
-description = "Multi-user DAG-based execution tracking and versioning for LangGraph agents"
+description = "Record-replay regression testing framework for AI agents"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.8"
@@ -21,14 +21,15 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-keywords = ["langchain", "langgraph", "agent", "dag", "versioning", "tracking", "llm", "ai"]
+keywords = ["testing", "ai", "agent", "regression", "llm", "record-replay"]
 
+# Core package has zero mandatory dependencies - only click for CLI
 dependencies = [
-    "langchain-core>=0.1.0",
-    "langgraph>=0.0.1",
+    "click>=8.0.0",
 ]
 
 [project.optional-dependencies]
@@ -37,9 +38,12 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
 ]
-examples = [
-    "langchain-google-genai>=0.0.1",
-    "langgraph-checkpoint>=0.0.1",
+interceptors = [
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+]
+semantic = [
+    "sentence-transformers>=2.0.0",
 ]
 
 [project.urls]
@@ -48,14 +52,29 @@ Documentation = "https://github.com/rohithputha/agentgit#readme"
 Repository = "https://github.com/rohithputha/agentgit"
 Issues = "https://github.com/rohithputha/agentgit/issues"
 
+[project.scripts]
+agenttest = "agenttest.cli.main:cli"
+
+[project.entry-points.pytest11]
+agenttest = "agenttest.pytest_plugin.plugin"
+
 [tool.setuptools]
-packages = ["agentgit", "agentgit.models", "agentgit.storage", "agentgit.tools"]
+packages = [
+    "agenttest",
+    "agenttest.models",
+    "agenttest.storage",
+    "agenttest.interceptors",
+    "agenttest.pytest_plugin",
+    "agenttest.cli",
+]
 
 [tool.setuptools.package-dir]
-agentgit = "agentgit"
-"agentgit.models" = "agentgit/models"
-"agentgit.storage" = "agentgit/storage"
-"agentgit.tools" = "agentgit/tools"
+agenttest = "."
+"agenttest.models" = "./models"
+"agenttest.storage" = "./storage"
+"agenttest.interceptors" = "./interceptors"
+"agenttest.pytest_plugin" = "./pytest_plugin"
+"agenttest.cli" = "./cli"
 
 [tool.setuptools.package-data]
-"agentgit.storage" = ["*.sql"]
+"agenttest.storage" = ["*.sql"]
