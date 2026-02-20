@@ -4,7 +4,7 @@
 
 agentgraph gives you **git-like execution tracking** and **record-replay regression testing** for LangGraph agents — without changing your agent code.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/built%20for-LangGraph-orange)](https://github.com/langchain-ai/langgraph)
 [![CI](https://github.com/rohithputha/agentgraph/actions/workflows/ci.yml/badge.svg)](https://github.com/rohithputha/agentgraph/actions)
@@ -411,5 +411,4 @@ Open an issue before starting large changes.
 
 ## License
 
-agentgit — MIT
-agenttest — Apache-2.0
+Apache-2.0
