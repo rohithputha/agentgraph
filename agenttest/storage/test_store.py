@@ -582,6 +582,46 @@ class TestStore:
             diff_summary=row['diff_summary']
         )
 
+    # ==================== CLI-specific Queries (no user/session filter) ====================
+
+    def list_all_recordings(self, status: Optional[str] = None) -> List[Recording]:
+        """List all recordings across all users/sessions (for CLI use)"""
+        query = "SELECT * FROM at_recordings"
+        params: list = []
+        if status:
+            query += " WHERE status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC"
+        rows = self.conn.execute(query, params).fetchall()
+        return [self._row_to_recording(row) for row in rows]
+
+    def list_all_comparisons(self, failed_only: bool = False) -> List[ComparisonResult]:
+        """List all comparisons across all users/sessions (for CLI use)"""
+        query = "SELECT * FROM at_comparisons"
+        params: list = []
+        if failed_only:
+            query += " WHERE overall_pass = 0"
+        query += " ORDER BY created_at DESC"
+        rows = self.conn.execute(query, params).fetchall()
+        return [
+            ComparisonResult(
+                comparison_id=row['comparison_id'],
+                baseline_recording_id=row['baseline_recording_id'],
+                replay_recording_id=row['replay_recording_id'],
+                overall_pass=bool(row['overall_pass']),
+                step_comparisons=[],
+                root_cause_index=row['root_cause_index'],
+                total_steps=row['total_steps'],
+                matched_steps=row['matched_steps'],
+                mismatched_steps=row['mismatched_steps'],
+                added_steps=row['added_steps'],
+                removed_steps=row['removed_steps'],
+                cascade_steps=row['cascade_steps'],
+                created_at=datetime.fromtimestamp(row['created_at']) if row['created_at'] else None
+            )
+            for row in rows
+        ]
+
     def close(self):
         """Close is handled by DagStore since it owns the connection"""
         pass

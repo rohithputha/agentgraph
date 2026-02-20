@@ -163,4 +163,5 @@ def agenttest_auto(request, agenttest_record, agenttest_replay, agenttest_config
             yield rep
 
             if not rep.passed:
-                pytest.fail(f"Regression detected: {rep.root_cause_summary}")
+                summary = rep.root_cause_summary or "No root cause identified"
+                pytest.fail(f"Regression detected: {summary}")

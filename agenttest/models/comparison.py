@@ -5,6 +5,7 @@ Used to represent the results of comparing baseline vs replay recordings.
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Optional, List
 
@@ -63,6 +64,8 @@ class ComparisonResult:
     added_steps: int = 0
     removed_steps: int = 0
     cascade_steps: int = 0
+
+    created_at: Optional[datetime] = None
 
     def __post_init__(self):
         """Calculate summary stats from step_comparisons if not provided"""

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from agentgit import AgentGit
-from agentgit.models.dag import ExecutionNode, ActionType, CallerType
+from agentgit.models.dag import ExecutionNode, ActionType, CallerType, BranchStatus
 from agentgit.event import Event, EventType
 
 from agenttest.storage.test_store import TestStore
@@ -159,6 +159,17 @@ class AgentTestSession:
             error=error
         )
 
+        # Deactivate the recording's branch so get_active_branch only returns
+        # the current recording's branch, not stale ones from previous recordings.
+        recording = self.test_store.get_recording(recording_id)
+        if recording and recording.branch_id:
+            self.ag.dag_store.update_branch_status(
+                self.user_id,
+                self.session_id,
+                recording.branch_id,
+                BranchStatus.COMPLETED
+            )
+
         # Deactivate recording
         self._active_recording = None
 
@@ -224,12 +235,11 @@ class AgentTestSession:
         detail_id = self.test_store.insert_llm_call_detail(detail)
         detail.id = detail_id
 
-        # Update recording step count
+        # Update recording step count (no commit — eventbus owns the transaction boundary)
         self._active_recording.step_count += 1
-        self.test_store.update_recording_status(
+        self.test_store.update_recording_step_count(
             self._active_recording.recording_id,
-            status=RecordingStatus.IN_PROGRESS.value,
-            step_count=self._active_recording.step_count
+            self._active_recording.step_count
         )
 
     # ==================== Tag/Baseline Management ====================

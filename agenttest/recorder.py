@@ -24,17 +24,17 @@ class Recorder:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
-            self.session.complete_recording(
-                self.recording.recording_id
-            )
-        else:
-            self.session.complete_recording(
-                self.recording.recording_id,
-                error=str(exc_val)
-            )
-
+        error = str(exc_val) if exc_type else None
+        self.session.complete_recording(self.recording.recording_id, error=error)
+        if exc_type is None and self.set_as_baseline_on_exit:
+            self.session.set_baseline(self.name, self.recording.recording_id)
         return False
+
+    def set_as_baseline(self, name: Optional[str] = None):
+        if not self.recording:
+            raise RuntimeError("No active recording")
+        baseline_name = name or self.name
+        self.session.set_baseline(baseline_name, self.recording.recording_id)
 
     @property
     def recording_id(self):
