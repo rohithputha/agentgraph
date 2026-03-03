@@ -1,76 +1,127 @@
 # agenttest
 
-**Record-replay regression testing for LangGraph agents.**
+Record/replay behavior regression testing for LLM agents.
 
-agenttest captures every LLM call your agent makes during a run, stores it as a named baseline, and automatically detects regressions when you replay against that baseline. Think of it as pytest for agent behaviour — not just individual functions.
+`agenttest` lets you approve agent behavior once, then enforce that behavior in CI.
+It is built on top of `agentgit` and stores baselines/comparisons in `.agentgit/`.
 
-Built on top of [agentgit](../README.md). Shares its SQLite database. No separate infrastructure needed.
+## Core idea
 
----
+`agenttest` validates **consistency with approved baselines**.
 
-## Features
+- It detects drift from what you already reviewed.
+- It does not claim the baseline itself is universally correct.
 
-- **Record** — capture every LLM call (prompt, response, fingerprint, token usage) into a named baseline
-- **Replay** — re-run your agent and compare every step against the baseline
-- **Three replay modes** — `full` (live calls), `locked` (100% cache, zero cost), `selective` (partial cache)
-- **Root-cause analysis** — identifies the first step that independently broke vs downstream cascade effects
-- **pytest plugin** — auto-wraps `@pytest.mark.agenttest` tests from CLI (`--agenttest`) with no `Replayer` boilerplate
-- **CLI** — inspect recordings, baselines, and comparison history from the terminal
-- **Assertion helpers** — `assert_no_regression()`, `assert_step_count()`
+## CLI-first workflow
 
----
-
-## Quickstart
+### 1) Write normal pytest test and mark it
 
 ```python
-# test_my_agent.py
 import pytest
 from agentgit.langgraph_callback import langgraph_callback
 
 @pytest.mark.agenttest
-@pytest.mark.baseline("my-baseline")
+@pytest.mark.baseline("my-agent-baseline")
 def test_my_agent(agenttest_session):
     callback = langgraph_callback(agenttest_session.ag.eventbus)
-    graph = build_your_agent(callback, agenttest_session)
-    result = graph.invoke({"messages": [...]})
+
+    graph = build_agent(callback, agenttest_session)
+    result = graph.invoke(
+        {"messages": [{"role": "user", "content": "Plan my trip"}]},
+        config={
+            "callbacks": [callback],
+            "configurable": {
+                "user_id": "pytest",
+                "session_id": "test-session",
+            },
+        },
+    )
+
     assert result is not None
 ```
 
-```bash
-# Record once
-pytest test_my_agent.py::test_my_agent --agenttest --agenttest-record
-
-# Replay on every CI run
-pytest test_my_agent.py::test_my_agent --agenttest --agenttest-mode=locked
-```
-
-For custom or non-standard models, `replayer.wrap_model(llm)` remains available as a fallback.
-
----
-
-## CLI
+### 2) Record baseline once
 
 ```bash
-agenttest list                          # all recordings
-agenttest show <recording_id>           # recording detail + LLM steps
-agenttest baseline list                 # all baselines
-agenttest baseline set <name> <rec_id>  # promote recording to baseline
-agenttest history                       # all comparison runs
-agenttest history --failed              # only failed comparisons
-agenttest diff <comparison_id>          # step-by-step breakdown
+agenttest record --name=test_my_agent
 ```
 
----
-
-## Running the demo
-
-A fully working example ships with the repo. No API key required.
+### 3) Replay on changes
 
 ```bash
-pytest examples/customer_support/ -v -s
+# strict regression mode
+agenttest replay --mode=locked
+
+# intentional change mode
+agenttest replay --mode=selective test_my_agent
 ```
 
----
+### 4) Accept reviewed change
+
+```bash
+agenttest accept test_my_agent
+```
+
+## Modes
+
+| Mode | What happens |
+|---|---|
+| `locked` | Intercepted LLM calls must hit cache; no live provider call should be needed |
+| `selective` | Cache hits use baseline; misses go live and are compared |
+| `full` | Re-record everything live |
+
+## Result semantics
+
+| Outcome | Meaning |
+|---|---|
+| `PASS` | Replay matched approved behavior |
+| `REGRESSION` | Existing approved behavior changed unexpectedly |
+| `DELTA` | New/changed behavior detected and needs explicit acceptance |
+
+## How it works internally
+
+1. **Recording**: callback events capture LLM step metadata and responses.
+2. **Fingerprinting**: structural signature (provider/method/model/roles/tools) supports alignment.
+3. **Replay interception**: gatekeeper/runtime checks cache for each LLM call.
+4. **Comparison**: baseline and replay steps are aligned and scored.
+5. **Storage**: results are written to `.agentgit/` for audit/history.
+
+## CI usage
+
+Use `agenttest` commands directly in workflows:
+
+```bash
+agenttest replay --mode=locked --tier=always
+agenttest replay --mode=locked --tier=local
+agenttest replay --mode=selective --tier=ci-only
+agenttest ci post-comment --pr=<number>
+```
+
+See `.github/workflows/agenttest.yml` for an end-to-end reference.
+
+## Commands
+
+```bash
+agenttest replay --mode=locked [test_filter]
+agenttest record --name=<pytest-k-filter>
+agenttest accept [test_name]
+agenttest status
+agenttest history
+agenttest diff <comparison_id>
+agenttest list
+agenttest show <recording_id>
+agenttest baseline list
+agenttest baseline set <name> <recording_id>
+agenttest pull-baseline --from-run <run_id>
+```
+
+## Requirements for reliable runs
+
+- Use `@pytest.mark.agenttest` for tests that should be auto-wrapped.
+- Pass `langgraph_callback(agenttest_session.ag.eventbus)` in callbacks.
+- Set stable `configurable.user_id` / `configurable.session_id` in invoke config.
+
+For custom/non-LangChain model paths, manual model wrapping can still be used as a fallback.
 
 ## License
 
