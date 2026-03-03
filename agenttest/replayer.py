@@ -14,7 +14,7 @@ from agenttest.interceptors.runtime import (
 )
 
 try:
-    from agenttest.interceptors import LLMGatekeeper, ReplayMode
+    from agenttest.interceptors.gatekeeper import LLMGatekeeper, ReplayMode
     INTERCEPTION_AVAILABLE = True
 except ImportError:
     INTERCEPTION_AVAILABLE = False

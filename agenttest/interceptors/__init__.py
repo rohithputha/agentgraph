@@ -1,13 +1,10 @@
 """
-AgentTest interceptors for LLM API calls
+AgentTest interceptors for LLM API calls.
+
+The gatekeeper path depends on langchain_core. Runtime interception helpers are
+always importable so the rest of the package can load in minimal environments.
 """
 
-from agenttest.interceptors.gatekeeper import (
-    LLMGatekeeper,
-    LLMCacheMissError,
-    ReplayMode
-)
-from agenttest.interceptors.response_builder import ResponseBuilder
 from agenttest.interceptors.runtime import (
     LockedModeNetworkError,
     get_active_replay_context,
@@ -17,6 +14,21 @@ from agenttest.interceptors.runtime import (
     set_active_replay_context,
     uninstall_global_runtime_interception,
 )
+
+LLMGatekeeper = None
+LLMCacheMissError = None
+ReplayMode = None
+ResponseBuilder = None
+
+try:
+    from agenttest.interceptors.gatekeeper import (  # type: ignore
+        LLMGatekeeper,
+        LLMCacheMissError,
+        ReplayMode,
+    )
+    from agenttest.interceptors.response_builder import ResponseBuilder  # type: ignore
+except ImportError:
+    pass
 
 __all__ = [
     "LLMGatekeeper",
