@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, Any
 from contextlib import contextmanager
 
@@ -14,6 +15,12 @@ except ImportError:
     INTERCEPTION_AVAILABLE = False
     ReplayMode = None
 
+logger = logging.getLogger(__name__)
+
+
+class ReplayIntegrationError(RuntimeError):
+    pass
+
 
 class Replayer:
     def __init__(
@@ -29,6 +36,7 @@ class Replayer:
         self.replay_name = replay_name or f"{baseline_name}-replay"
         self.mode = mode.lower()
         self.config = config or getattr(session, 'config', AgentTestConfig())
+        self.middleware = []
 
         if self.mode not in ["full", "selective", "locked"]:
             raise ValueError(
@@ -63,7 +71,11 @@ class Replayer:
             self._baseline_recording.recording_id
         )
 
-        print(f"✅ Loaded baseline '{self.baseline_name}' ({len(self.baseline_details)} steps)")
+        logger.info(
+            "Loaded baseline '%s' (%d steps)",
+            self.baseline_name,
+            len(self.baseline_details),
+        )
 
         if self.mode in ["selective", "locked"]:
             self._setup_interception()
@@ -81,7 +93,33 @@ class Replayer:
             except ImportError:
                 pass
 
-        self._complete_replay_recording(success=(exc_type is None))
+        integration_missing = (
+            exc_type is None
+            and self.mode in ["selective", "locked"]
+            and self._gatekeeper is not None
+            and self._gatekeeper.interception_attempts == 0
+        )
+
+        completion_error = None
+        if exc_type is not None:
+            completion_error = "Replay failed"
+        elif integration_missing:
+            completion_error = (
+                "Replay integration missing: interception mode requires using "
+                "replayer.wrap_model(llm) or replayer.middleware during execution"
+            )
+
+        self._complete_replay_recording(
+            success=(exc_type is None and not integration_missing),
+            error_message=completion_error,
+        )
+
+        if integration_missing:
+            raise ReplayIntegrationError(
+                "Replay ran without exercising interception in "
+                f"{self.mode.upper()} mode. "
+                "Integrate with replayer.wrap_model(llm) or wire replayer.middleware."
+            )
 
         self._replay_recording = self.session.get_recording_by_name(self.replay_name)
 
@@ -90,12 +128,17 @@ class Replayer:
                 self._replay_recording.recording_id
             )
             if is_locked_miss:
-                print(
-                    f"Locked mode cache miss — captured {len(self.replay_details)} of "
-                    f"{len(self.baseline_details)} baseline steps. Running comparison..."
+                logger.warning(
+                    "Locked mode cache miss: captured %d of %d baseline steps; running comparison",
+                    len(self.replay_details),
+                    len(self.baseline_details),
                 )
             else:
-                print(f"✅ Replay '{self.replay_name}' captured {len(self.replay_details)} steps")
+                logger.info(
+                    "Replay '%s' captured %d steps",
+                    self.replay_name,
+                    len(self.replay_details),
+                )
 
             self._compare()
             if self.comparison_result:
@@ -121,8 +164,16 @@ class Replayer:
         replay_mode = mode_map[self.mode]
         self.middleware = self._gatekeeper.create_middleware(mode=replay_mode)
 
-        print(f"⚡ LLM interception enabled (mode={self.mode})")
-        print(f"   Cache loaded: {len(self._gatekeeper._cache)} responses")
+        logger.info(
+            "LLM interception enabled (mode=%s, cache_entries=%d)",
+            self.mode,
+            len(self._gatekeeper._cache),
+        )
+
+    def wrap_model(self, llm: Any, provider: Optional[str] = None, method: Optional[str] = None) -> Any:
+        if self.mode == "full" or not self._gatekeeper:
+            return llm
+        return self._gatekeeper.wrap_model(llm, provider=provider, method=method)
 
     def _start_replay_recording(self):
         recording = self.session.create_recording(
@@ -130,9 +181,9 @@ class Replayer:
             config=self.config
         )
         self._active_recording_id = recording.recording_id
-        print(f"🔴 Recording started: '{self.replay_name}'")
+        logger.info("Recording started: '%s'", self.replay_name)
 
-    def _complete_replay_recording(self, success: bool):
+    def _complete_replay_recording(self, success: bool, error_message: Optional[str] = None):
         if not self._active_recording_id:
             return
 
@@ -140,12 +191,15 @@ class Replayer:
             self.session.complete_recording(self._active_recording_id)
             status = "completed"
         else:
-            self.session.complete_recording(self._active_recording_id, error="Replay failed")
+            self.session.complete_recording(
+                self._active_recording_id,
+                error=error_message or "Replay failed"
+            )
             status = "failed"
-        print(f"⏹️ Recording stopped: '{self.replay_name}' ({status})")
+        logger.info("Recording stopped: '%s' (%s)", self.replay_name, status)
 
     def _compare(self):
-        print(f"\n🔍 Comparing baseline vs replay...")
+        logger.info("Comparing baseline vs replay")
 
         comparator = Comparison(
             similarity_threshold=self.config.similarity_threshold,
@@ -159,18 +213,23 @@ class Replayer:
         )
 
         if self.comparison_result.overall_pass:
-            print(f"✅ No regressions detected!")
-            print(f"   {self.comparison_result.matched_steps} steps matched")
+            logger.info("No regressions detected (%d matched steps)", self.comparison_result.matched_steps)
         else:
             if self.comparison_result.has_regression:
-                print(f"❌ Regression detected! {self.comparison_result.regression_steps} regression step(s)")
+                logger.warning(
+                    "Regression detected (%d regression step(s))",
+                    self.comparison_result.regression_steps,
+                )
             if self.comparison_result.has_delta:
-                print(f"⚠️  Delta detected! {self.comparison_result.delta_steps} new/changed step(s)")
-            print(f"   Root cause at step {self.comparison_result.root_cause_index}")
+                logger.warning(
+                    "Delta detected (%d new/changed step(s))",
+                    self.comparison_result.delta_steps,
+                )
+            logger.info("Root cause at step %s", self.comparison_result.root_cause_index)
 
     def _store_comparison(self):
         self.session.store_comparison(self.comparison_result)
-        print(f"💾 Comparison stored in database")
+        logger.info("Comparison stored in database")
 
     @property
     def passed(self) -> bool:

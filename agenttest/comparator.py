@@ -39,10 +39,14 @@ class Comparison:
 
         cascade_steps = sum(1 for sc in step_comparisons if sc.status == StepStatus.CASCADE)
 
+        baseline_recording_id = self._recording_id_or_empty(baseline_details)
+        replay_recording_id = self._recording_id_or_empty(replay_details)
+        comparison_seed = f"{baseline_recording_id}:{replay_recording_id}"
+
         return ComparisonResult(
-            comparison_id=f"cmp_{hashlib.sha256((str(baseline_details[0].recording_id if baseline_details else '') + ':' + str(replay_details[0].recording_id if replay_details else '')).encode()).hexdigest()[:12]}",
-            baseline_recording_id=baseline_details[0].recording_id if baseline_details else "",
-            replay_recording_id=replay_details[0].recording_id if replay_details else "",
+            comparison_id=f"cmp_{hashlib.sha256(comparison_seed.encode()).hexdigest()[:12]}",
+            baseline_recording_id=baseline_recording_id,
+            replay_recording_id=replay_recording_id,
             total_steps=total_steps,
             matched_steps=matched_steps,
             mismatched_steps=mismatched_steps,
@@ -52,6 +56,12 @@ class Comparison:
             root_cause_index=root_cause_index,
             step_comparisons=step_comparisons
         )
+
+    def _recording_id_or_empty(self, details: List[LLMCallDetail]) -> str:
+        if not details:
+            return ""
+        first = details[0]
+        return first.recording_id if first and first.recording_id else ""
 
     def _compare_pair(self, pair, si: int) -> StepComparison:
         if pair.status == AlignStatus.REMOVED:
