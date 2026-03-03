@@ -14,7 +14,7 @@ Built on top of [agentgit](../README.md). Shares its SQLite database. No separat
 - **Replay** — re-run your agent and compare every step against the baseline
 - **Three replay modes** — `full` (live calls), `locked` (100% cache, zero cost), `selective` (partial cache)
 - **Root-cause analysis** — identifies the first step that independently broke vs downstream cascade effects
-- **pytest plugin** — `agenttest_record`, `agenttest_replay`, `agenttest_auto` fixtures available automatically
+- **pytest plugin** — auto-wraps `@pytest.mark.agenttest` tests from CLI (`--agenttest`) with no `Replayer` boilerplate
 - **CLI** — inspect recordings, baselines, and comparison history from the terminal
 - **Assertion helpers** — `assert_no_regression()`, `assert_step_count()`
 
@@ -23,56 +23,28 @@ Built on top of [agentgit](../README.md). Shares its SQLite database. No separat
 ## Quickstart
 
 ```python
-# conftest.py — shared session for your test suite
-import pytest
-from agenttest.session import AgentTestSession
-
-@pytest.fixture(scope="session")
-def agenttest_session(tmp_path_factory):
-    session = AgentTestSession.standalone(
-        project_dir=str(tmp_path_factory.mktemp("agenttest")),
-        user_id="ci",
-        session_id="my-agent",
-    )
-    yield session
-    session.close()
-```
-
-```python
 # test_my_agent.py
 import pytest
 from agentgit.langgraph_callback import langgraph_callback
-from agenttest.pytest_plugin.assertions import assert_no_regression
-
-@pytest.mark.agenttest
-def test_record(agenttest_session, agenttest_record):
-    callback = langgraph_callback(agenttest_session.ag.eventbus)
-
-    with agenttest_record(name="my-baseline", set_as_baseline=True) as rec:
-        graph = build_your_agent(callback, agenttest_session)
-        graph.invoke({"messages": [...]})
-
-    assert rec.step_count > 0
 
 @pytest.mark.agenttest
 @pytest.mark.baseline("my-baseline")
-def test_regression(agenttest_session, agenttest_replay):
+def test_my_agent(agenttest_session):
     callback = langgraph_callback(agenttest_session.ag.eventbus)
-
-    with agenttest_replay(baseline_name="my-baseline", mode="full") as rep:
-        graph = build_your_agent(callback, agenttest_session)
-        graph.invoke({"messages": [...]})
-
-    assert_no_regression(rep.comparison_result)
+    graph = build_your_agent(callback, agenttest_session)
+    result = graph.invoke({"messages": [...]})
+    assert result is not None
 ```
 
 ```bash
 # Record once
-pytest test_my_agent.py::test_record --agenttest-record --agenttest
+pytest test_my_agent.py::test_my_agent --agenttest --agenttest-record
 
 # Replay on every CI run
-pytest test_my_agent.py::test_regression --agenttest
+pytest test_my_agent.py::test_my_agent --agenttest --agenttest-mode=locked
 ```
+
+For custom or non-standard models, `replayer.wrap_model(llm)` remains available as a fallback.
 
 ---
 

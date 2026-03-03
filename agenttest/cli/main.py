@@ -371,7 +371,17 @@ def status(ctx):
 def record(ctx, name):
     """Re-record a test from scratch (full mode, all live calls)."""
     import subprocess
-    args = ["python", "-m", "pytest", "--agenttest-record", "--agenttest-mode=full", "-v", "-k", name]
+    args = [
+        "python",
+        "-m",
+        "pytest",
+        "--agenttest",
+        "--agenttest-record",
+        "--agenttest-mode=full",
+        "-v",
+        "-k",
+        name,
+    ]
     result = subprocess.run(args, cwd=ctx.obj["project_dir"])
     sys.exit(result.returncode)
 
