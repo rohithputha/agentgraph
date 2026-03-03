@@ -1,0 +1,54 @@
+name: AgentTest
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  agenttest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+
+      - name: Run always-tier tests (locked)
+        run: agenttest replay --mode=locked --tier=always
+
+      - name: Run local-tier tests (locked)
+        run: agenttest replay --mode=locked --tier=local
+
+      - name: Run ci-only-tier tests (selective)
+        id: ci_only
+        continue-on-error: true
+        run: agenttest replay --mode=selective --tier=ci-only
+
+      - name: Upload baseline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agenttest-baseline
+          path: .agentgit/
+          retention-days: 30
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: agenttest ci post-comment --pr=${{ github.event.pull_request.number }}
+
+      - name: Check for regressions
+        if: failure() && steps.ci_only.outcome != 'failure'
+        run: |
+          echo "AgentTest detected regressions in always/local tier tests."
+          exit 1

@@ -44,7 +44,10 @@ def disable_runtime_langchain_patch(monkeypatch):
     Keep tests deterministic in environments where importing BaseChatModel can
     pull in heavy optional stacks. Wrapper-based replay coverage remains active.
     """
-    if os.getenv("AGENTTEST_RUN_LANGCHAIN_RUNTIME") == "1":
+    if (
+        os.getenv("AGENTTEST_RUN_LANGCHAIN_RUNTIME") == "1"
+        or os.getenv("AGENTTEST_RUN_LIVE") == "1"
+    ):
         return
 
     monkeypatch.setattr(
