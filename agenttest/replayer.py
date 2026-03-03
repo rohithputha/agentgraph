@@ -178,7 +178,11 @@ class Replayer:
     def _start_replay_recording(self):
         recording = self.session.create_recording(
             name=self.replay_name,
-            config=self.config
+            config=self.config,
+            metadata={
+                "recording_kind": "replay",
+                "baseline_name": self.baseline_name,
+            },
         )
         self._active_recording_id = recording.recording_id
         logger.info("Recording started: '%s'", self.replay_name)

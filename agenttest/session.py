@@ -94,7 +94,8 @@ class AgentTestSession:
     def create_recording(
         self,
         name: str,
-        config: Optional[AgentTestConfig] = None
+        config: Optional[AgentTestConfig] = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> Recording:
         """
         Create a recording and activate its branch.
@@ -102,6 +103,7 @@ class AgentTestSession:
         Args:
             name: Recording name
             config: Optional configuration snapshot
+            metadata: Optional recording metadata payload
 
         Returns:
             Created Recording object
@@ -129,7 +131,7 @@ class AgentTestSession:
             step_count=0,
             error=None,
             config=config.to_dict() if config else None,
-            metadata={}
+            metadata=metadata or {}
         )
 
         # Store recording

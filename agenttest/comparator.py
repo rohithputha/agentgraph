@@ -1,6 +1,7 @@
 import hashlib
 import json
-from typing import List, Dict, Any, Optional, Set
+import re
+from typing import List, Dict, Any, Optional, Set, Tuple
 from difflib import SequenceMatcher
 from agenttest.models.llm_call_detail import LLMCallDetail
 
@@ -219,24 +220,39 @@ class Comparison:
 
     def _extract_keys(self, data: Any, prefix: str = "") -> Set[str]:
         keys = set()
-        if isinstance(data, dict):
-            for k, v in data.items():
-                key_path = f"{prefix}.{k}" if prefix else k
-                keys.add(key_path)
-                keys.update(self._extract_keys(v, key_path))
-        elif isinstance(data, list):
-            for i, v in enumerate(data):
-                keys.update(self._extract_keys(v, f"{prefix}[{i}]"))
+        max_depth = 32
+        stack: List[Tuple[Any, str, int]] = [(data, prefix, 0)]
 
+        while stack:
+            value, current_prefix, depth = stack.pop()
+            if depth >= max_depth:
+                if current_prefix:
+                    keys.add(f"{current_prefix}.__truncated__")
+                continue
+
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    key_path = f"{current_prefix}.{k}" if current_prefix else k
+                    keys.add(key_path)
+                    stack.append((v, key_path, depth + 1))
+            elif isinstance(value, list):
+                for i, v in enumerate(value):
+                    key_path = f"{current_prefix}[{i}]" if current_prefix else f"[{i}]"
+                    keys.add(key_path)
+                    stack.append((v, key_path, depth + 1))
         return keys
 
     def _get_type(self, data: Dict[str, Any], key: str) -> str:
         try:
             value = data
-            for part in key.split('.'):
-                value = value[part]
+            parts = re.findall(r'([^.\\[\\]]+|\\[\\d+\\])', key)
+            for part in parts:
+                if part.startswith("[") and part.endswith("]"):
+                    value = value[int(part[1:-1])]
+                else:
+                    value = value[part]
             return type(value).__name__
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, ValueError, IndexError):
             return "unknown"
 
     def _extract_text(self, data: Any) -> str:

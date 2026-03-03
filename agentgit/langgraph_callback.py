@@ -2,6 +2,7 @@ from uuid import UUID
 import time
 import os
 import logging
+import threading
 from typing import Any, Dict, List, Optional, Union
 
 from langchain_core.messages import BaseMessage
@@ -24,6 +25,7 @@ class langgraph_callback(BaseCallbackHandler):
     def __init__(self, eventbus):
         super().__init__()
         self.eventbus = eventbus
+        self._lock = threading.RLock()
         self._runs = {}
         self._tool_runs = {}
         self._context_map = {} # run_id -> (user_id, session_id)
@@ -33,10 +35,11 @@ class langgraph_callback(BaseCallbackHandler):
         return f"anonymous:{os.getpid()}", f"run:{rid}"
 
     def _context_from_map(self, run_id: Optional[str], parent_run_id: Optional[str]) -> Optional[tuple[str, str]]:
-        if run_id and run_id in self._context_map:
-            return self._context_map[run_id]
-        if parent_run_id and parent_run_id in self._context_map:
-            return self._context_map[parent_run_id]
+        with self._lock:
+            if run_id and run_id in self._context_map:
+                return self._context_map[run_id]
+            if parent_run_id and parent_run_id in self._context_map:
+                return self._context_map[parent_run_id]
         return None
 
     def _get_or_create_context_for_run(self, run_id: Optional[str], parent_run_id: Optional[str] = None) -> tuple[str, str]:
@@ -45,7 +48,8 @@ class langgraph_callback(BaseCallbackHandler):
             return mapped
         user_id, session_id = self._fallback_context(run_id, parent_run_id)
         if run_id:
-            self._context_map[str(run_id)] = (user_id, session_id)
+            with self._lock:
+                self._context_map[str(run_id)] = (user_id, session_id)
         logger.warning(
             "Missing user/session context; using fallback user_id=%s session_id=%s",
             user_id,
@@ -81,7 +85,8 @@ class langgraph_callback(BaseCallbackHandler):
     def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any], *, run_id: UUID, parent_run_id: Optional[UUID] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
         # print(f"DEBUG: on_chain_start run_id={run_id} parent={parent_run_id}")
         user_id, session_id = self._get_session_context(kwargs, str(run_id), str(parent_run_id) if parent_run_id else None, metadata)
-        self._context_map[str(run_id)] = (user_id, session_id)
+        with self._lock:
+            self._context_map[str(run_id)] = (user_id, session_id)
     
 
     def _extract_model(self, serialized: Dict, kwargs: Dict) -> str:
@@ -236,7 +241,8 @@ class langgraph_callback(BaseCallbackHandler):
         """ENHANCED: Now captures provider, method, tools, and computes fingerprint for AgentTest"""
 
         user_id, session_id = self._get_session_context(kwargs, str(run_id), str(parent_run_id) if parent_run_id else None, metadata)
-        self._context_map[str(run_id)] = (user_id, session_id)
+        with self._lock:
+            self._context_map[str(run_id)] = (user_id, session_id)
 
         # Extract model (existing)
         model = self._extract_model(serialized, kwargs)
@@ -266,18 +272,19 @@ class langgraph_callback(BaseCallbackHandler):
         fingerprint = compute_fingerprint(provider, method, request_params) if AGENTTEST_AVAILABLE else ""
 
         # Store in run context (ENHANCED with new fields)
-        self._runs[run_id] = {
-            "model": model,
-            "start_time": time.time(),
-            "messages": flat_messages,
-            "chunks": [],
-            # NEW fields for AgentTest
-            "provider": provider,
-            "method": method,
-            "request_params": request_params,
-            "fingerprint": fingerprint,
-            "tools": tools,
-        }
+        with self._lock:
+            self._runs[run_id] = {
+                "model": model,
+                "start_time": time.time(),
+                "messages": flat_messages,
+                "chunks": [],
+                # NEW fields for AgentTest
+                "provider": provider,
+                "method": method,
+                "request_params": request_params,
+                "fingerprint": fingerprint,
+                "tools": tools,
+            }
 
         if self.eventbus:
             self.eventbus.publish(EventType.LLM_CALL_START, Event(
@@ -296,14 +303,17 @@ class langgraph_callback(BaseCallbackHandler):
         """ENHANCED: Now captures tool_calls and full response_data for AgentTest"""
 
         user_id, session_id = self._get_or_create_context_for_run(str(run_id))
-        run = self._runs.get(run_id)
+        with self._lock:
+            run = self._runs.get(run_id)
 
         # Handle case where run_id not found (shouldn't happen, but be defensive)
         if not run:
             return
 
         duration = int((time.time() - run.get("start_time")) * 1000)
-        run["duration_ms"] = duration
+        with self._lock:
+            if run_id in self._runs:
+                self._runs[run_id]["duration_ms"] = duration
 
         # Extract text and usage (existing)
         text = None
@@ -354,11 +364,13 @@ class langgraph_callback(BaseCallbackHandler):
             ))
 
         # Clean up to prevent memory leak
-        self._runs.pop(run_id, None)
+        with self._lock:
+            self._runs.pop(run_id, None)
 
     
     def on_llm_error(self, error: Exception, *, run_id: str,**kwargs):
-        run = self._runs.get(run_id, {})
+        with self._lock:
+            run = self._runs.pop(run_id, {})
 
         if self.eventbus:
             self.eventbus.publish(EventType.LLM_ERROR, Event(
@@ -369,19 +381,16 @@ class langgraph_callback(BaseCallbackHandler):
                 timestamp=time.time()
             ))
 
-        # Clean up to prevent memory leak
-        self._runs.pop(run_id, None)
-
-
     def on_tool_start( self, serialized: Dict[str, Any], input_str: str, *, run_id: str, inputs: Optional[Dict] = None, **kwargs):
         name = (serialized or {}).get("name", "unknown")
         args = inputs if inputs else {"input": input_str}
         
-        self._tool_runs[run_id] = {
-            "name": name,
-            "args": args,
-            "start_time": time.time()
-        }
+        with self._lock:
+            self._tool_runs[run_id] = {
+                "name": name,
+                "args": args,
+                "start_time": time.time()
+            }
         
         # Publish event
         if self.eventbus:
@@ -394,7 +403,8 @@ class langgraph_callback(BaseCallbackHandler):
             ))
     
     def on_tool_end( self, output: str, *, run_id: str, **kwargs):
-        run = self._tool_runs.pop(run_id, {})
+        with self._lock:
+            run = self._tool_runs.pop(run_id, {})
         duration_ms = int((time.time() - run.get("start_time", time.time())) * 1000)
         
         # Publish event
@@ -412,7 +422,8 @@ class langgraph_callback(BaseCallbackHandler):
             ))
 
     def on_tool_error(self, error: Exception, *, run_id: str, **kwargs):
-        run = self._tool_runs.pop(run_id, {})
+        with self._lock:
+            run = self._tool_runs.pop(run_id, {})
 
         if self.eventbus:
             self.eventbus.publish(EventType.TOOL_ERROR, Event(
@@ -463,7 +474,8 @@ class langgraph_callback(BaseCallbackHandler):
 
         # Clean up context map to prevent memory leak
         # Remove this run_id from context map after chain completes
-        self._context_map.pop(str(run_id), None)
+        with self._lock:
+            self._context_map.pop(str(run_id), None)
     
 
 

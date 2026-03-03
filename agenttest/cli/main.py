@@ -291,8 +291,9 @@ def replay(ctx, mode, tier, test_names):
 
 @cli.command()
 @click.argument("test_name", required=False)
+@click.option("--baseline-name", default=None, help="Explicit baseline name to promote replay into")
 @click.pass_context
-def accept(ctx, test_name):
+def accept(ctx, test_name, baseline_name):
     """Promote the most recent replay recording to the new baseline."""
     session = _make_session(ctx.obj["project_dir"])
     try:
@@ -303,15 +304,22 @@ def accept(ctx, test_name):
             click.echo("No completed recordings found to accept.", err=True)
             sys.exit(1)
         latest = recordings[0]
-        baseline_name = latest.name
-        for suffix in ("-replay", "_replay", "-test", "_test"):
-            if baseline_name.endswith(suffix):
-                baseline_name = baseline_name[:-len(suffix)]
-                break
-        tag = session.set_baseline(baseline_name, latest.recording_id)
+        resolved_baseline_name = baseline_name
+        if not resolved_baseline_name:
+            resolved_baseline_name = (latest.metadata or {}).get("baseline_name")
+        if not resolved_baseline_name:
+            resolved_baseline_name = latest.name
+            for suffix in ("-replay", "_replay", "-test", "_test"):
+                if resolved_baseline_name.endswith(suffix):
+                    resolved_baseline_name = resolved_baseline_name[:-len(suffix)]
+                    break
+        if not resolved_baseline_name:
+            click.echo("Unable to determine baseline name; pass --baseline-name.", err=True)
+            sys.exit(1)
+        tag = session.set_baseline(resolved_baseline_name, latest.recording_id)
         click.echo(f"Accepted recording '{latest.name}'")
-        click.echo(f"  -> baseline '{baseline_name}' (node {tag.node_id})")
-        click.echo(f"\nNext: git add .agentgit/ && git commit -m 'update baseline: {baseline_name}'")
+        click.echo(f"  -> baseline '{resolved_baseline_name}' (node {tag.node_id})")
+        click.echo(f"\nNext: git add .agentgit/ && git commit -m 'update baseline: {resolved_baseline_name}'")
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
