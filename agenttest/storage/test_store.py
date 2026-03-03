@@ -40,7 +40,21 @@ class TestStore:
         schema_path = Path(__file__).parent / "schema.sql"
         with open(schema_path) as f:
             self.conn.executescript(f.read())
+        self._run_migrations()
         self.conn.commit()
+
+    def _run_migrations(self):
+        migrations = [
+            "ALTER TABLE at_llm_call_details ADD COLUMN was_cache_hit INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE at_comparisons ADD COLUMN regression_steps INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE at_comparisons ADD COLUMN delta_steps INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE at_step_comparisons ADD COLUMN was_cache_hit INTEGER",
+        ]
+        for sql in migrations:
+            try:
+                self.conn.execute(sql)
+            except Exception:
+                pass  # Column already exists
 
     # ==================== Tags CRUD ====================
 
@@ -268,8 +282,8 @@ class TestStore:
             INSERT INTO at_llm_call_details (
                 node_id, recording_id, step_index, provider, method, model,
                 fingerprint, request_params, response_data, is_streaming,
-                stream_id, duration_ms, token_usage, error, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                was_cache_hit, stream_id, duration_ms, token_usage, error, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             detail.node_id,
             detail.recording_id,
@@ -281,6 +295,7 @@ class TestStore:
             json.dumps(detail.request_params),
             json.dumps(detail.response_data),
             1 if detail.is_streaming else 0,
+            1 if detail.was_cache_hit else 0,
             detail.stream_id,
             detail.duration_ms,
             json.dumps(detail.token_usage) if detail.token_usage else None,
@@ -347,8 +362,9 @@ class TestStore:
                 overall_pass, similarity_threshold, root_cause_index,
                 total_steps, matched_steps, mismatched_steps,
                 added_steps, removed_steps, cascade_steps,
+                regression_steps, delta_steps,
                 created_at, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             result.comparison_id,
             user_id,
@@ -364,8 +380,10 @@ class TestStore:
             result.added_steps,
             result.removed_steps,
             result.cascade_steps,
+            result.regression_steps,
+            result.delta_steps,
             int(datetime.now().timestamp()),
-            None  # metadata
+            None
         ))
 
         # Insert step comparisons
@@ -375,8 +393,9 @@ class TestStore:
                     comparison_id, step_index,
                     baseline_node_id, replay_node_id,
                     baseline_detail_id, replay_detail_id,
-                    status, match_type, similarity_score, diff_summary
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, match_type, similarity_score, diff_summary,
+                    was_cache_hit
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 result.comparison_id,
                 sc.step_index,
@@ -387,7 +406,8 @@ class TestStore:
                 sc.status.value,
                 sc.match_type.value if sc.match_type else None,
                 sc.similarity_score,
-                sc.diff_summary
+                sc.diff_summary,
+                (1 if sc.was_cache_hit else 0) if sc.was_cache_hit is not None else None,
             ))
 
         self.conn.commit()
@@ -416,7 +436,6 @@ class TestStore:
             comparison_id=row['comparison_id'],
             baseline_recording_id=row['baseline_recording_id'],
             replay_recording_id=row['replay_recording_id'],
-            overall_pass=bool(row['overall_pass']),
             step_comparisons=step_comparisons,
             root_cause_index=row['root_cause_index'],
             total_steps=row['total_steps'],
@@ -424,7 +443,9 @@ class TestStore:
             mismatched_steps=row['mismatched_steps'],
             added_steps=row['added_steps'],
             removed_steps=row['removed_steps'],
-            cascade_steps=row['cascade_steps']
+            cascade_steps=row['cascade_steps'],
+            regression_steps=row['regression_steps'] if row['regression_steps'] is not None else 0,
+            delta_steps=row['delta_steps'] if row['delta_steps'] is not None else 0,
         )
 
     def list_comparisons(
@@ -458,7 +479,6 @@ class TestStore:
                 comparison_id=row['comparison_id'],
                 baseline_recording_id=row['baseline_recording_id'],
                 replay_recording_id=row['replay_recording_id'],
-                overall_pass=bool(row['overall_pass']),
                 step_comparisons=[],  # Empty for list view
                 root_cause_index=row['root_cause_index'],
                 total_steps=row['total_steps'],
@@ -466,7 +486,9 @@ class TestStore:
                 mismatched_steps=row['mismatched_steps'],
                 added_steps=row['added_steps'],
                 removed_steps=row['removed_steps'],
-                cascade_steps=row['cascade_steps']
+                cascade_steps=row['cascade_steps'],
+                regression_steps=row['regression_steps'] if row['regression_steps'] is not None else 0,
+                delta_steps=row['delta_steps'] if row['delta_steps'] is not None else 0,
             )
             for row in rows
         ]
@@ -561,6 +583,7 @@ class TestStore:
             request_params=json.loads(row['request_params']),
             response_data=json.loads(row['response_data']),
             is_streaming=bool(row['is_streaming']),
+            was_cache_hit=bool(row['was_cache_hit']) if row['was_cache_hit'] is not None else False,
             stream_id=row['stream_id'],
             duration_ms=row['duration_ms'],
             token_usage=json.loads(row['token_usage']) if row['token_usage'] else None,
@@ -570,6 +593,7 @@ class TestStore:
 
     def _row_to_step_comparison(self, row: sqlite3.Row) -> StepComparison:
         """Convert DB row to StepComparison"""
+        wch = row['was_cache_hit']
         return StepComparison(
             step_index=row['step_index'],
             baseline_node_id=row['baseline_node_id'],
@@ -579,7 +603,8 @@ class TestStore:
             status=StepStatus(row['status']),
             match_type=MatchType(row['match_type']) if row['match_type'] else None,
             similarity_score=row['similarity_score'],
-            diff_summary=row['diff_summary']
+            diff_summary=row['diff_summary'],
+            was_cache_hit=bool(wch) if wch is not None else None,
         )
 
     # ==================== CLI-specific Queries (no user/session filter) ====================
@@ -608,7 +633,6 @@ class TestStore:
                 comparison_id=row['comparison_id'],
                 baseline_recording_id=row['baseline_recording_id'],
                 replay_recording_id=row['replay_recording_id'],
-                overall_pass=bool(row['overall_pass']),
                 step_comparisons=[],
                 root_cause_index=row['root_cause_index'],
                 total_steps=row['total_steps'],
@@ -617,6 +641,8 @@ class TestStore:
                 added_steps=row['added_steps'],
                 removed_steps=row['removed_steps'],
                 cascade_steps=row['cascade_steps'],
+                regression_steps=row['regression_steps'] if row['regression_steps'] is not None else 0,
+                delta_steps=row['delta_steps'] if row['delta_steps'] is not None else 0,
                 created_at=datetime.fromtimestamp(row['created_at']) if row['created_at'] else None
             )
             for row in rows

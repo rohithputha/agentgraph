@@ -10,7 +10,7 @@ except ImportError:
     except ImportError:
         tomllib = None
 
-from agenttest.models.config import AgentTestConfig
+from agenttest.models.config import AgentTestConfig, TestConfig
 
 
 def load_config(path: Optional[str] = None) -> AgentTestConfig:
@@ -86,12 +86,26 @@ def _parse_config(data: Dict[str, Any], source_path: Path) -> AgentTestConfig:
             f"ignore_fields must be a list, got {type(ignore_fields).__name__}"
         )
 
+    tests = []
+    for t in data.get('tests', []):
+        if 'name' not in t:
+            raise ValueError("Each [[tests]] entry must have a 'name' field")
+        tier = t.get('tier', 'always')
+        if tier not in ('always', 'local', 'ci-only'):
+            raise ValueError(f"tier must be 'always', 'local', or 'ci-only', got '{tier}'")
+        tests.append(TestConfig(
+            name=t['name'],
+            tier=tier,
+            mode=t.get('mode'),
+        ))
+
     return AgentTestConfig(
         similarity_threshold=similarity_threshold,
         default_replay_mode=default_replay_mode,
         ignore_fields=ignore_fields,
         agentgit_dir=config_data.get('agentgit_dir', '.agentgit'),
-        project_dir=config_data.get('project_dir', '.')
+        project_dir=config_data.get('project_dir', '.'),
+        tests=tests,
     )
 
 
@@ -111,7 +125,8 @@ def save_config(config: AgentTestConfig, path: str) -> None:
             'ignore_fields': config.ignore_fields,
             'agentgit_dir': config.agentgit_dir,
             'project_dir': config.project_dir,
-        }
+        },
+        'tests': [t.to_dict() for t in config.tests],
     }
 
     output_path = Path(path)

@@ -39,13 +39,10 @@ class Comparison:
 
         cascade_steps = sum(1 for sc in step_comparisons if sc.status == StepStatus.CASCADE)
 
-        overall_pass = mismatched_steps == 0 and added_steps == 0 and removed_steps == 0
-
         return ComparisonResult(
             comparison_id=f"cmp_{hashlib.sha256((str(baseline_details[0].recording_id if baseline_details else '') + ':' + str(replay_details[0].recording_id if replay_details else '')).encode()).hexdigest()[:12]}",
             baseline_recording_id=baseline_details[0].recording_id if baseline_details else "",
             replay_recording_id=replay_details[0].recording_id if replay_details else "",
-            overall_pass=overall_pass,
             total_steps=total_steps,
             matched_steps=matched_steps,
             mismatched_steps=mismatched_steps,
@@ -67,7 +64,8 @@ class Comparison:
                 replay_detail_id=None,
                 match_type=None,
                 similarity_score=0,
-                diff_summary = "Step removed in replay"
+                diff_summary = "Step removed in replay",
+                was_cache_hit=None
             )
 
         elif pair.status == AlignStatus.ADDED:
@@ -80,7 +78,8 @@ class Comparison:
                 replay_detail_id = pair.replay_detail.id if pair.replay_detail else None,
                 match_type = None,
                 similarity_score = 0,
-                diff_summary = "Step added in replay"
+                diff_summary = "Step added in replay",
+                was_cache_hit=pair.replay_detail.was_cache_hit if pair.replay_detail else None
             )
         
         
@@ -97,7 +96,8 @@ class Comparison:
                 replay_detail_id = replay.id,
                 match_type = MatchType.EXACT,
                 similarity_score = 1,
-                diff_summary = None
+                diff_summary = None,
+                was_cache_hit=replay.was_cache_hit
             )
 
         structural_score = self._structural_similarity(baseline, replay)
@@ -115,7 +115,8 @@ class Comparison:
                 replay_detail_id=replay.id,
                 match_type=MatchType.SIMILAR,
                 similarity_score=combined_score,
-                diff_summary=None
+                diff_summary=None,
+                was_cache_hit=replay.was_cache_hit
             )
 
         return StepComparison(
@@ -127,7 +128,8 @@ class Comparison:
             replay_detail_id=replay.id,
             match_type=None,
             similarity_score=combined_score,
-            diff_summary=f"Similarity {combined_score:.2f} below threshold {self.threshold}"
+            diff_summary=f"Similarity {combined_score:.2f} below threshold {self.threshold}",
+            was_cache_hit=replay.was_cache_hit
         )
 
 

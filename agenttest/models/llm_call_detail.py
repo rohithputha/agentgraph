@@ -30,6 +30,7 @@ class LLMCallDetail:
 
     # Streaming info
     is_streaming: bool = False
+    was_cache_hit: bool = False   # True if served from cache during replay
     stream_id: Optional[str] = None
 
     # Performance metrics

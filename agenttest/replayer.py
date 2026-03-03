@@ -72,7 +72,16 @@ class Replayer:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._complete_replay_recording(exc_type is None)
+        is_locked_miss = False
+        if exc_type is not None and INTERCEPTION_AVAILABLE:
+            try:
+                from agenttest.interceptors.gatekeeper import LLMCacheMissError
+                if issubclass(exc_type, LLMCacheMissError):
+                    is_locked_miss = True
+            except ImportError:
+                pass
+
+        self._complete_replay_recording(success=(exc_type is None))
 
         self._replay_recording = self.session.get_recording_by_name(self.replay_name)
 
@@ -80,13 +89,20 @@ class Replayer:
             self.replay_details = self.session.get_recording_details(
                 self._replay_recording.recording_id
             )
-
-            print(f"✅ Replay '{self.replay_name}' captured {len(self.replay_details)} steps")
+            if is_locked_miss:
+                print(
+                    f"Locked mode cache miss — captured {len(self.replay_details)} of "
+                    f"{len(self.baseline_details)} baseline steps. Running comparison..."
+                )
+            else:
+                print(f"✅ Replay '{self.replay_name}' captured {len(self.replay_details)} steps")
 
             self._compare()
-
             if self.comparison_result:
                 self._store_comparison()
+
+        if is_locked_miss:
+            return True  # suppress LLMCacheMissError — outcome is in comparison_result
 
         return False
 
@@ -146,8 +162,10 @@ class Replayer:
             print(f"✅ No regressions detected!")
             print(f"   {self.comparison_result.matched_steps} steps matched")
         else:
-            print(f"⚠️ Regressions detected!")
-            print(f"   {self.comparison_result.mismatched_steps} divergences found")
+            if self.comparison_result.has_regression:
+                print(f"❌ Regression detected! {self.comparison_result.regression_steps} regression step(s)")
+            if self.comparison_result.has_delta:
+                print(f"⚠️  Delta detected! {self.comparison_result.delta_steps} new/changed step(s)")
             print(f"   Root cause at step {self.comparison_result.root_cause_index}")
 
     def _store_comparison(self):
@@ -160,6 +178,7 @@ class Replayer:
             self.comparison_result is not None
             and self.comparison_result.overall_pass
         )
+
 
     @property
     def root_cause_summary(self) -> Optional[str]:
@@ -201,9 +220,17 @@ class Replayer:
 
         result = self.comparison_result
 
-        status = "✅ PASSED" if result.overall_pass else "❌ FAILED"
-        print(f"\nStatus: {status}")
-        print(f"Mode: {self.mode.upper()}")
+        if result.overall_pass:
+            status_label = "✅ PASS"
+        elif result.has_regression and result.has_delta:
+            status_label = "❌ REGRESSION  ⚠ DELTA"
+        elif result.has_regression:
+            status_label = "❌ REGRESSION"
+        else:
+            status_label = "⚠  DELTA — Review Required"
+
+        print(f"\nOutcome: {status_label}")
+        print(f"Mode:    {self.mode.upper()}")
 
         print(f"\nSteps:")
         print(f"  Total: {result.total_steps}")

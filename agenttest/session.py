@@ -224,6 +224,7 @@ class AgentTestSession:
             request_params=meta.get("request_params", {}),
             response_data=meta.get("response_data", {}),
             is_streaming=meta.get("is_streaming", False),
+            was_cache_hit=meta.get("was_cache_hit", False),
             stream_id=meta.get("stream_id"),
             duration_ms=event.duration_ms or 0,
             token_usage=event.usage,

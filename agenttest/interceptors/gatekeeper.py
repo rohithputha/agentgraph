@@ -83,6 +83,7 @@ class LLMGatekeeper:
                             "response_data": cached_detail.response_data,
                             "is_streaming": False,
                             "cached": True,
+                            "was_cache_hit": True,
                         }
                     )
                 )
@@ -95,9 +96,8 @@ class LLMGatekeeper:
 
             if self._mode == ReplayMode.LOCKED:
                 raise LLMCacheMissError(
-                    f"LOCKED mode: No cached response found in baseline.\n"
-                    f"This LLM call was not in the baseline recording.\n"
-                    f"Messages: {message_dicts[-1] if message_dicts else 'empty'}"
+                    "LOCKED mode: no cached response for this LLM call. "
+                    "Run with --mode=selective to allow live calls for new steps."
                 )
 
             print(f"⚠️ LLM cache miss [{self._mode.value}]: (calling live)")
