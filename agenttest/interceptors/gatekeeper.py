@@ -49,6 +49,7 @@ class LLMGatekeeper:
         self.interception_attempts = 0
         self.wrapper_interceptions = 0
         self.middleware_interceptions = 0
+        self.runtime_interceptions = 0
         self.cache_hits = 0
         self.cache_misses = 0
         self.live_calls = 0
@@ -204,6 +205,11 @@ class LLMGatekeeper:
         return None
 
     def _to_message_dict(self, msg: Any) -> Dict[str, str]:
+        if isinstance(msg, dict):
+            role = msg.get("role") or msg.get("type") or "unknown"
+            content = msg.get("content", "")
+            return {"role": str(role), "content": str(content)}
+
         role = getattr(msg, "type", None) or getattr(msg, "role", None) or "unknown"
         content = getattr(msg, "content", "")
         return {"role": str(role), "content": str(content)}
@@ -265,6 +271,8 @@ class LLMGatekeeper:
             self.wrapper_interceptions += 1
         elif source == "middleware":
             self.middleware_interceptions += 1
+        elif source == "runtime":
+            self.runtime_interceptions += 1
 
         cached_detail, fingerprint = self._find_cached_detail_internal(
             provider=provider,
@@ -459,6 +467,7 @@ class LLMGatekeeper:
             "interception_attempts": self.interception_attempts,
             "wrapper_interceptions": self.wrapper_interceptions,
             "middleware_interceptions": self.middleware_interceptions,
+            "runtime_interceptions": self.runtime_interceptions,
             "cache_hits": self.cache_hits,
             "cache_misses": self.cache_misses,
             "live_calls": self.live_calls,
@@ -474,6 +483,7 @@ class LLMGatekeeper:
         self.interception_attempts = 0
         self.wrapper_interceptions = 0
         self.middleware_interceptions = 0
+        self.runtime_interceptions = 0
         self.cache_hits = 0
         self.cache_misses = 0
         self.live_calls = 0

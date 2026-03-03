@@ -7,6 +7,11 @@ from agenttest.comparator import Comparison
 from agenttest.models.comparison import ComparisonResult, StepStatus
 from agenttest.models.config import AgentTestConfig
 from agenttest.models.recording import Recording
+from agenttest.interceptors.runtime import (
+    install_global_runtime_interception,
+    reset_active_replay_context,
+    set_active_replay_context,
+)
 
 try:
     from agenttest.interceptors import LLMGatekeeper, ReplayMode
@@ -54,6 +59,7 @@ class Replayer:
         self._active_recording_id: Optional[str] = None
         self._gatekeeper: Optional[Any] = None
         self._wrapped_models_count = 0
+        self._runtime_context_token = None
 
         self.comparison_result: Optional[ComparisonResult] = None
         self.baseline_details = []
@@ -80,83 +86,70 @@ class Replayer:
 
         if self.mode in ["selective", "locked"]:
             self._setup_interception()
+            self._activate_runtime_context()
 
         self._start_replay_recording()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        is_locked_miss = False
-        if exc_type is not None and INTERCEPTION_AVAILABLE:
-            try:
-                from agenttest.interceptors.gatekeeper import LLMCacheMissError
-                if issubclass(exc_type, LLMCacheMissError):
-                    is_locked_miss = True
-            except ImportError:
-                pass
+        try:
+            is_locked_miss = False
+            if exc_type is not None and INTERCEPTION_AVAILABLE:
+                try:
+                    from agenttest.interceptors.gatekeeper import LLMCacheMissError
+                    if issubclass(exc_type, LLMCacheMissError):
+                        is_locked_miss = True
+                except ImportError:
+                    pass
 
-        integration_missing = (
-            exc_type is None
-            and self.mode in ["selective", "locked"]
-            and self._gatekeeper is not None
-            and self._wrapped_models_count == 0
-        )
-
-        completion_error = None
-        if exc_type is not None:
-            completion_error = "Replay failed"
-        elif integration_missing:
-            completion_error = (
-                "Replay integration missing: interception mode requires using "
-                "replayer.wrap_model(llm) during execution"
+            completion_error = "Replay failed" if exc_type is not None else None
+            self._complete_replay_recording(
+                success=(exc_type is None),
+                error_message=completion_error,
             )
 
-        self._complete_replay_recording(
-            success=(exc_type is None and not integration_missing),
-            error_message=completion_error,
-        )
+            self._replay_recording = self.session.get_recording_by_name(self.replay_name)
 
-        if integration_missing:
-            raise ReplayIntegrationError(
-                "Replay ran without wrapped model integration in "
-                f"{self.mode.upper()} mode. "
-                "Use replayer.wrap_model(llm) and run the graph with the wrapped model."
-            )
-
-        self._replay_recording = self.session.get_recording_by_name(self.replay_name)
-
-        if self._replay_recording:
-            self.replay_details = self.session.get_recording_details(
-                self._replay_recording.recording_id
-            )
-            if is_locked_miss:
-                logger.warning(
-                    "Locked mode cache miss: captured %d of %d baseline steps; running comparison",
-                    len(self.replay_details),
-                    len(self.baseline_details),
+            if self._replay_recording:
+                self.replay_details = self.session.get_recording_details(
+                    self._replay_recording.recording_id
                 )
-            else:
-                logger.info(
-                    "Replay '%s' captured %d steps",
-                    self.replay_name,
-                    len(self.replay_details),
-                )
-
-            if self.mode == "locked":
-                live_steps = [d for d in self.replay_details if not d.was_cache_hit]
-                if live_steps:
-                    raise ReplayIntegrationError(
-                        "LOCKED mode executed live LLM call(s). "
-                        "Ensure your graph uses only models wrapped via replayer.wrap_model(llm)."
+                if is_locked_miss:
+                    logger.warning(
+                        "Locked mode cache miss: captured %d of %d baseline steps; running comparison",
+                        len(self.replay_details),
+                        len(self.baseline_details),
+                    )
+                else:
+                    logger.info(
+                        "Replay '%s' captured %d steps",
+                        self.replay_name,
+                        len(self.replay_details),
                     )
 
-            self._compare()
-            if self.comparison_result:
-                self._store_comparison()
+                if exc_type is None or is_locked_miss:
+                    self._assert_interception_integration()
 
-        if is_locked_miss:
-            return True  # suppress LLMCacheMissError — outcome is in comparison_result
+                if self.mode == "locked":
+                    live_steps = [d for d in self.replay_details if not d.was_cache_hit]
+                    if live_steps:
+                        raise ReplayIntegrationError(
+                            "LOCKED mode executed live LLM call(s). "
+                            "This indicates interception was bypassed. "
+                            "Use AgentTest auto runtime interception or replayer.wrap_model(llm)."
+                        )
 
-        return False
+                self._compare()
+                if self.comparison_result:
+                    self._store_comparison()
+
+            if is_locked_miss:
+                return True  # suppress LLMCacheMissError — outcome is in comparison_result
+
+            return False
+        finally:
+            reset_active_replay_context(self._runtime_context_token)
+            self._runtime_context_token = None
 
     def _setup_interception(self):
         if not INTERCEPTION_AVAILABLE:
@@ -178,6 +171,31 @@ class Replayer:
             self.mode,
             len(self._gatekeeper._cache),
         )
+
+    def _activate_runtime_context(self):
+        if self.mode == "full" or not self._gatekeeper:
+            return
+
+        install_global_runtime_interception()
+        self._runtime_context_token = set_active_replay_context(
+            gatekeeper=self._gatekeeper,
+            mode=self.mode,
+            baseline_name=self.baseline_name,
+            replay_name=self.replay_name,
+        )
+
+    def _assert_interception_integration(self):
+        if self.mode not in ["selective", "locked"] or not self._gatekeeper:
+            return
+
+        stats = self._gatekeeper.get_stats()
+        expected_llm_activity = len(self.baseline_details) > 0 or len(self.replay_details) > 0
+        if expected_llm_activity and stats.get("interception_attempts", 0) == 0:
+            raise ReplayIntegrationError(
+                "Replay captured LLM activity but no interception attempts were observed. "
+                "Ensure AgentTest runtime interception is active, or wrap models with "
+                "replayer.wrap_model(llm)."
+            )
 
     def wrap_model(self, llm: Any, provider: Optional[str] = None, method: Optional[str] = None) -> Any:
         if self.mode == "full" or not self._gatekeeper:
