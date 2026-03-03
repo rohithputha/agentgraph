@@ -47,6 +47,8 @@ class LLMGatekeeper:
         self._response_builder = ResponseBuilder()
 
         self.interception_attempts = 0
+        self.wrapper_interceptions = 0
+        self.middleware_interceptions = 0
         self.cache_hits = 0
         self.cache_misses = 0
         self.live_calls = 0
@@ -255,9 +257,14 @@ class LLMGatekeeper:
         self,
         provider: str,
         method: str,
-        request_params: Dict[str, Any]
+        request_params: Dict[str, Any],
+        source: str = "unknown"
     ) -> CacheDecision:
         self.interception_attempts += 1
+        if source == "wrapper":
+            self.wrapper_interceptions += 1
+        elif source == "middleware":
+            self.middleware_interceptions += 1
 
         cached_detail, fingerprint = self._find_cached_detail_internal(
             provider=provider,
@@ -319,7 +326,8 @@ class LLMGatekeeper:
         return self.check_request(
             provider=provider,
             method=method,
-            request_params=request_params
+            request_params=request_params,
+            source="middleware"
         )
 
     def _infer_provider(self, llm: Any) -> str:
@@ -386,6 +394,7 @@ class LLMGatekeeper:
                     provider=self._provider,
                     method=self._method,
                     request_params=request_params,
+                    source="wrapper",
                 )
                 if decision.hit and decision.ai_message is not None:
                     return decision.ai_message
@@ -402,6 +411,7 @@ class LLMGatekeeper:
                     provider=self._provider,
                     method=self._method,
                     request_params=request_params,
+                    source="wrapper",
                 )
                 if decision.hit and decision.ai_message is not None:
                     return decision.ai_message
@@ -447,6 +457,8 @@ class LLMGatekeeper:
     def get_stats(self) -> Dict[str, Any]:
         return {
             "interception_attempts": self.interception_attempts,
+            "wrapper_interceptions": self.wrapper_interceptions,
+            "middleware_interceptions": self.middleware_interceptions,
             "cache_hits": self.cache_hits,
             "cache_misses": self.cache_misses,
             "live_calls": self.live_calls,
@@ -460,6 +472,8 @@ class LLMGatekeeper:
 
     def reset_stats(self):
         self.interception_attempts = 0
+        self.wrapper_interceptions = 0
+        self.middleware_interceptions = 0
         self.cache_hits = 0
         self.cache_misses = 0
         self.live_calls = 0

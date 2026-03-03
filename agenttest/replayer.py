@@ -53,6 +53,7 @@ class Replayer:
         self._replay_recording: Optional[Recording] = None
         self._active_recording_id: Optional[str] = None
         self._gatekeeper: Optional[Any] = None
+        self._wrapped_models_count = 0
 
         self.comparison_result: Optional[ComparisonResult] = None
         self.baseline_details = []
@@ -97,7 +98,7 @@ class Replayer:
             exc_type is None
             and self.mode in ["selective", "locked"]
             and self._gatekeeper is not None
-            and self._gatekeeper.interception_attempts == 0
+            and self._wrapped_models_count == 0
         )
 
         completion_error = None
@@ -106,7 +107,7 @@ class Replayer:
         elif integration_missing:
             completion_error = (
                 "Replay integration missing: interception mode requires using "
-                "replayer.wrap_model(llm) or replayer.middleware during execution"
+                "replayer.wrap_model(llm) during execution"
             )
 
         self._complete_replay_recording(
@@ -116,9 +117,9 @@ class Replayer:
 
         if integration_missing:
             raise ReplayIntegrationError(
-                "Replay ran without exercising interception in "
+                "Replay ran without wrapped model integration in "
                 f"{self.mode.upper()} mode. "
-                "Integrate with replayer.wrap_model(llm) or wire replayer.middleware."
+                "Use replayer.wrap_model(llm) and run the graph with the wrapped model."
             )
 
         self._replay_recording = self.session.get_recording_by_name(self.replay_name)
@@ -139,6 +140,14 @@ class Replayer:
                     self.replay_name,
                     len(self.replay_details),
                 )
+
+            if self.mode == "locked":
+                live_steps = [d for d in self.replay_details if not d.was_cache_hit]
+                if live_steps:
+                    raise ReplayIntegrationError(
+                        "LOCKED mode executed live LLM call(s). "
+                        "Ensure your graph uses only models wrapped via replayer.wrap_model(llm)."
+                    )
 
             self._compare()
             if self.comparison_result:
@@ -173,6 +182,7 @@ class Replayer:
     def wrap_model(self, llm: Any, provider: Optional[str] = None, method: Optional[str] = None) -> Any:
         if self.mode == "full" or not self._gatekeeper:
             return llm
+        self._wrapped_models_count += 1
         return self._gatekeeper.wrap_model(llm, provider=provider, method=method)
 
     def _start_replay_recording(self):
