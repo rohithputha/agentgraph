@@ -59,10 +59,27 @@ def test_support_refund(agenttest_session):
     assert result is not None
 ```
 
+If you do not want pytest tests for experimentation, define standalone scenarios in `agenttest.toml`:
+
+```toml
+[agenttest]
+default_replay_mode = "locked"
+
+[[scenarios]]
+name = "refund_flow"
+entrypoint = "myapp.scenarios:run_refund_flow"
+expects_llm = true
+input = { query = "Refund my order" }
+```
+
 ### 3) Record baseline once
 
 ```bash
+# pytest backend
 agenttest record --name=test_support_refund
+
+# standalone scenario backend (no pytest test required)
+agenttest record --scenario=refund_flow
 ```
 
 ### 4) Replay in CI/local
@@ -73,6 +90,9 @@ agenttest replay --mode=locked
 
 # when intentionally changing prompts/graph
 agenttest replay --mode=selective test_support_refund
+
+# standalone scenario replay
+agenttest replay --scenario=refund_flow --mode=locked
 
 # accept reviewed replay as new baseline
 agenttest accept test_support_refund
@@ -118,6 +138,7 @@ Expected: full re-record.
 ## Where it works well today
 
 - Pytest-driven LangGraph/LangChain tests using `@pytest.mark.agenttest`.
+- Standalone scenario runs via `agenttest record/replay --scenario ...` (no pytest test file needed).
 - CLI-first execution in local and CI: `agenttest record/replay/accept/status`.
 - Structured behavior history: `agenttest history`, `agenttest diff`.
 - Tiered CI split (`always`, `local`, `ci-only`) via `agenttest replay --tier=...`.
@@ -125,8 +146,9 @@ Expected: full re-record.
 
 ## Current limitations (important)
 
-- Recording depends on callback wiring. If you do not pass `langgraph_callback(...)`, no LLM steps are captured.
+- In pytest-agent flow, callback wiring is still the most reliable capture path. Standalone scenarios can capture without callback via runtime interception.
 - Auto replay wrapping depends on marker/plugin path. Tests without `@pytest.mark.agenttest` are not managed automatically.
+- Standalone scenarios avoid pytest markers, but entrypoint functions must be importable (`module:function`).
 - Non-standard model invocation paths (bypassing LangChain `BaseChatModel`) may need manual fallback integration.
 - Semantic equivalence scoring is currently basic; paraphrase-heavy domains can still produce noise.
 - Determinism boundaries for time/UUID/external side effects are not fully productized yet.
@@ -157,7 +179,9 @@ Reference workflow: `.github/workflows/agenttest.yml`.
 
 ```bash
 agenttest replay --mode=locked [test_filter]
-agenttest record --name=<pytest-k-filter>
+agenttest replay --scenario=<scenario_name> --mode=locked
+agenttest record --name=<pytest-k-filter>          # pytest backend
+agenttest record --scenario=<scenario_name>        # standalone backend
 agenttest accept [test_name]
 agenttest status
 agenttest history

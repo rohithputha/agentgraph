@@ -14,7 +14,9 @@ It is built on top of `agentgit` and stores baselines/comparisons in `.agentgit/
 
 ## CLI-first workflow
 
-### 1) Write normal pytest test and mark it
+### 1) Pick execution style
+
+Pytest style:
 
 ```python
 import pytest
@@ -40,10 +42,29 @@ def test_my_agent(agenttest_session):
     assert result is not None
 ```
 
+Standalone scenario style (no pytest test required):
+
+```toml
+[agenttest]
+default_replay_mode = "locked"
+
+[[scenarios]]
+name = "trip_flow"
+entrypoint = "myapp.scenarios:trip_flow"
+expects_llm = true
+input = { query = "Plan my trip" }
+```
+
+Where `myapp.scenarios:trip_flow` is an importable callable that runs the agent.
+
 ### 2) Record baseline once
 
 ```bash
+# pytest backend
 agenttest record --name=test_my_agent
+
+# standalone scenario backend
+agenttest record --scenario=trip_flow
 ```
 
 ### 3) Replay on changes
@@ -54,6 +75,9 @@ agenttest replay --mode=locked
 
 # intentional change mode
 agenttest replay --mode=selective test_my_agent
+
+# standalone scenario replay
+agenttest replay --scenario=trip_flow --mode=locked
 ```
 
 ### 4) Accept reviewed change
@@ -103,7 +127,9 @@ See `.github/workflows/agenttest.yml` for an end-to-end reference.
 
 ```bash
 agenttest replay --mode=locked [test_filter]
+agenttest replay --scenario=<scenario_name> --mode=locked
 agenttest record --name=<pytest-k-filter>
+agenttest record --scenario=<scenario_name>
 agenttest accept [test_name]
 agenttest status
 agenttest history
@@ -121,6 +147,7 @@ agenttest pull-baseline --from-run <run_id>
 - Pass `langgraph_callback(agenttest_session.ag.eventbus)` in callbacks.
 - Set stable `configurable.user_id` / `configurable.session_id` in invoke config.
 
+For standalone scenarios, make sure `entrypoint = "module:function"` is importable from the current environment.
 For custom/non-LangChain model paths, manual model wrapping can still be used as a fallback.
 
 ## License

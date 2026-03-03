@@ -10,7 +10,7 @@ except ImportError:
     except ImportError:
         tomllib = None
 
-from agenttest.models.config import AgentTestConfig, TestConfig
+from agenttest.models.config import AgentTestConfig, ScenarioConfig, TestConfig
 
 
 def load_config(path: Optional[str] = None) -> AgentTestConfig:
@@ -99,6 +99,14 @@ def _parse_config(data: Dict[str, Any], source_path: Path) -> AgentTestConfig:
             mode=t.get('mode'),
         ))
 
+    scenarios = []
+    for s in data.get("scenarios", []):
+        if "name" not in s:
+            raise ValueError("Each [[scenarios]] entry must have a 'name' field")
+        if "entrypoint" not in s:
+            raise ValueError("Each [[scenarios]] entry must have an 'entrypoint' field")
+        scenarios.append(ScenarioConfig.from_dict(s))
+
     return AgentTestConfig(
         similarity_threshold=similarity_threshold,
         default_replay_mode=default_replay_mode,
@@ -106,6 +114,7 @@ def _parse_config(data: Dict[str, Any], source_path: Path) -> AgentTestConfig:
         agentgit_dir=config_data.get('agentgit_dir', '.agentgit'),
         project_dir=config_data.get('project_dir', '.'),
         tests=tests,
+        scenarios=scenarios,
     )
 
 
@@ -127,6 +136,7 @@ def save_config(config: AgentTestConfig, path: str) -> None:
             'project_dir': config.project_dir,
         },
         'tests': [t.to_dict() for t in config.tests],
+        'scenarios': [s.to_dict() for s in config.scenarios],
     }
 
     output_path = Path(path)

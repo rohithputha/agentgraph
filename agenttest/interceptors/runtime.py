@@ -3,9 +3,13 @@ import copy
 import functools
 import logging
 import threading
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+
+from agentgit.event import Event, EventType
+from agenttest.fingerprint import compute_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +22,23 @@ class ReplayRuntimeContext:
     replay_name: Optional[str] = None
 
 
+@dataclass
+class RecordingRuntimeContext:
+    session: Any
+    mode: str  # record | replay
+    run_name: str
+
+
 class LockedModeNetworkError(RuntimeError):
     pass
 
 
 _ACTIVE_REPLAY_CONTEXT: contextvars.ContextVar[Optional[ReplayRuntimeContext]] = contextvars.ContextVar(
     "agenttest_active_replay_context",
+    default=None,
+)
+_ACTIVE_RECORDING_CONTEXT: contextvars.ContextVar[Optional[RecordingRuntimeContext]] = contextvars.ContextVar(
+    "agenttest_active_recording_context",
     default=None,
 )
 
@@ -73,6 +88,25 @@ def reset_active_replay_context(token: Any) -> None:
 
 def get_active_replay_context() -> Optional[ReplayRuntimeContext]:
     return _ACTIVE_REPLAY_CONTEXT.get()
+
+
+def set_active_recording_context(session: Any, mode: str, run_name: str):
+    ctx = RecordingRuntimeContext(
+        session=session,
+        mode=mode,
+        run_name=run_name,
+    )
+    return _ACTIVE_RECORDING_CONTEXT.set(ctx)
+
+
+def reset_active_recording_context(token: Any) -> None:
+    if token is None:
+        return
+    _ACTIVE_RECORDING_CONTEXT.reset(token)
+
+
+def get_active_recording_context() -> Optional[RecordingRuntimeContext]:
+    return _ACTIVE_RECORDING_CONTEXT.get()
 
 
 def install_global_runtime_interception() -> bool:
@@ -236,6 +270,170 @@ def _resolve_tools(kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [tool for tool in tools if isinstance(tool, dict)]
 
 
+def _infer_provider_from_llm(llm: Any) -> str:
+    name = llm.__class__.__name__.lower()
+    if "openai" in name:
+        return "azure_openai" if "azure" in name else "openai"
+    if "anthropic" in name:
+        return "anthropic"
+    if "google" in name:
+        return "google"
+    if "cohere" in name:
+        return "cohere"
+    if "mistral" in name:
+        return "mistral"
+    return "unknown"
+
+
+def _infer_method_from_provider(provider: str) -> str:
+    method_map = {
+        "openai": "chat.completions.create",
+        "azure_openai": "chat.completions.create",
+        "anthropic": "messages.create",
+        "google": "generateContent",
+        "cohere": "chat",
+        "mistral": "chat",
+    }
+    return method_map.get(provider, "chat")
+
+
+def _extract_callbacks(kwargs: Dict[str, Any]) -> List[Any]:
+    callbacks: List[Any] = []
+    direct = kwargs.get("callbacks")
+    if isinstance(direct, list):
+        callbacks.extend(direct)
+
+    config = kwargs.get("config")
+    if isinstance(config, dict):
+        cfg_callbacks = config.get("callbacks")
+        if isinstance(cfg_callbacks, list):
+            callbacks.extend(cfg_callbacks)
+    return callbacks
+
+
+def _has_langgraph_callback(kwargs: Dict[str, Any]) -> bool:
+    for cb in _extract_callbacks(kwargs):
+        cls_name = cb.__class__.__name__.lower()
+        module = cb.__class__.__module__.lower()
+        if cls_name == "langgraph_callback":
+            return True
+        if "agentgit.langgraph_callback" in module:
+            return True
+    return False
+
+
+def _extract_usage(ai_message: Any) -> Optional[Dict[str, Any]]:
+    if ai_message is None:
+        return None
+    response_metadata = getattr(ai_message, "response_metadata", None) or {}
+    usage = response_metadata.get("usage")
+    if isinstance(usage, dict):
+        return copy.deepcopy(usage)
+
+    usage_metadata = getattr(ai_message, "usage_metadata", None)
+    if isinstance(usage_metadata, dict):
+        return copy.deepcopy(usage_metadata)
+    return None
+
+
+def _build_response_data(ai_message: Any) -> Dict[str, Any]:
+    if ai_message is None:
+        return {"content": "", "tool_calls": [], "usage": None}
+
+    content = getattr(ai_message, "content", "")
+    tool_calls = getattr(ai_message, "tool_calls", None) or []
+    usage = _extract_usage(ai_message)
+    return {
+        "content": str(content or ""),
+        "tool_calls": copy.deepcopy(tool_calls) if isinstance(tool_calls, list) else [],
+        "usage": usage,
+    }
+
+
+def _emit_runtime_llm_event(
+    *,
+    llm: Any,
+    raw_input: Any,
+    kwargs: Dict[str, Any],
+    ai_message: Any,
+    was_cache_hit: bool,
+) -> None:
+    record_ctx = _ACTIVE_RECORDING_CONTEXT.get()
+    if record_ctx is None:
+        return
+    if _has_langgraph_callback(kwargs):
+        # Callback path already emits this event; avoid duplicate detail rows.
+        return
+
+    session = getattr(record_ctx, "session", None)
+    if session is None:
+        return
+
+    gatekeeper = getattr(get_active_replay_context(), "gatekeeper", None)
+    messages = _coerce_messages(raw_input)
+
+    if gatekeeper is not None:
+        request_params = gatekeeper._build_request_params(
+            messages=messages,
+            model=_resolve_model_name(llm, kwargs),
+            tools=_resolve_tools(kwargs),
+            invocation=_resolve_invocation(kwargs),
+        )
+        provider = gatekeeper._infer_provider(llm)
+        method = gatekeeper._infer_method(provider)
+    else:
+        # Recording path without gatekeeper.
+        request_params = {
+            "model": _resolve_model_name(llm, kwargs),
+            "messages": [
+                {
+                    "role": str(getattr(msg, "type", None) or getattr(msg, "role", None) or "unknown"),
+                    "content": str(getattr(msg, "content", "")),
+                }
+                if not isinstance(msg, dict)
+                else {
+                    "role": str(msg.get("role") or msg.get("type") or "unknown"),
+                    "content": str(msg.get("content", "")),
+                }
+                for msg in messages
+            ],
+            "tools": _resolve_tools(kwargs),
+            "temperature": _resolve_invocation(kwargs).get("temperature"),
+            "max_tokens": _resolve_invocation(kwargs).get("max_tokens"),
+            "top_p": _resolve_invocation(kwargs).get("top_p"),
+            "stream": bool(_resolve_invocation(kwargs).get("stream", False)),
+        }
+        provider = _infer_provider_from_llm(llm)
+        method = _infer_method_from_provider(provider)
+
+    response_data = _build_response_data(ai_message)
+    fingerprint = compute_fingerprint(provider, method, request_params)
+
+    session.ag.eventbus.publish(
+        EventType.LLM_CALL_END,
+        Event(
+            type=EventType.LLM_CALL_END,
+            user_id=session.user_id,
+            session_id=session.session_id,
+            run_id=f"runtime-{uuid.uuid4().hex[:10]}",
+            model=str(request_params.get("model", "")),
+            content=response_data.get("content", ""),
+            usage=response_data.get("usage"),
+            duration_ms=0,
+            metadata={
+                "provider": provider,
+                "method": method,
+                "fingerprint": fingerprint,
+                "request_params": request_params,
+                "response_data": response_data,
+                "is_streaming": False,
+                "was_cache_hit": was_cache_hit,
+                "source": "runtime",
+            },
+        ),
+    )
+
+
 def _maybe_intercept(llm: Any, raw_input: Any, kwargs: Dict[str, Any], source: str) -> Any:
     ctx = _ACTIVE_REPLAY_CONTEXT.get()
     if ctx is None:
@@ -287,7 +485,15 @@ def _make_invoke_wrapper(original: Any):
         decision = _maybe_intercept(self, input, kwargs, source="runtime")
         if decision is not None and decision.hit and decision.ai_message is not None:
             return decision.ai_message
-        return original(self, input, *args, **kwargs)
+        output = original(self, input, *args, **kwargs)
+        _emit_runtime_llm_event(
+            llm=self,
+            raw_input=input,
+            kwargs=kwargs,
+            ai_message=output,
+            was_cache_hit=False,
+        )
+        return output
 
     return wrapped
 
@@ -298,7 +504,15 @@ def _make_ainvoke_wrapper(original: Any):
         decision = _maybe_intercept(self, input, kwargs, source="runtime")
         if decision is not None and decision.hit and decision.ai_message is not None:
             return decision.ai_message
-        return await original(self, input, *args, **kwargs)
+        output = await original(self, input, *args, **kwargs)
+        _emit_runtime_llm_event(
+            llm=self,
+            raw_input=input,
+            kwargs=kwargs,
+            ai_message=output,
+            was_cache_hit=False,
+        )
+        return output
 
     return wrapped
 
@@ -340,10 +554,29 @@ def _make_batch_wrapper(original: Any):
     def wrapped(self, inputs: Any, *args: Any, **kwargs: Any):
         ctx = _ACTIVE_REPLAY_CONTEXT.get()
         if ctx is None or not _mode_is_interceptable(ctx.mode):
-            return original(self, inputs, *args, **kwargs)
+            outputs = original(self, inputs, *args, **kwargs)
+            if isinstance(inputs, (list, tuple)) and isinstance(outputs, list):
+                for idx, item in enumerate(inputs):
+                    ai_message = outputs[idx] if idx < len(outputs) else None
+                    _emit_runtime_llm_event(
+                        llm=self,
+                        raw_input=item,
+                        kwargs=kwargs,
+                        ai_message=ai_message,
+                        was_cache_hit=False,
+                    )
+            return outputs
 
         if not isinstance(inputs, (list, tuple)):
-            return original(self, inputs, *args, **kwargs)
+            output = original(self, inputs, *args, **kwargs)
+            _emit_runtime_llm_event(
+                llm=self,
+                raw_input=inputs,
+                kwargs=kwargs,
+                ai_message=output,
+                was_cache_hit=False,
+            )
+            return output
 
         decisions = []
         all_cached = True
@@ -357,7 +590,21 @@ def _make_batch_wrapper(original: Any):
         if all_cached:
             return [decision.ai_message for decision in decisions]
 
-        return original(self, inputs, *args, **kwargs)
+        outputs = original(self, inputs, *args, **kwargs)
+        if isinstance(outputs, list):
+            for idx, item in enumerate(inputs):
+                decision = decisions[idx]
+                if decision is not None and decision.hit:
+                    continue
+                ai_message = outputs[idx] if idx < len(outputs) else None
+                _emit_runtime_llm_event(
+                    llm=self,
+                    raw_input=item,
+                    kwargs=kwargs,
+                    ai_message=ai_message,
+                    was_cache_hit=False,
+                )
+        return outputs
 
     return wrapped
 
@@ -367,10 +614,29 @@ def _make_abatch_wrapper(original: Any):
     async def wrapped(self, inputs: Any, *args: Any, **kwargs: Any):
         ctx = _ACTIVE_REPLAY_CONTEXT.get()
         if ctx is None or not _mode_is_interceptable(ctx.mode):
-            return await original(self, inputs, *args, **kwargs)
+            outputs = await original(self, inputs, *args, **kwargs)
+            if isinstance(inputs, (list, tuple)) and isinstance(outputs, list):
+                for idx, item in enumerate(inputs):
+                    ai_message = outputs[idx] if idx < len(outputs) else None
+                    _emit_runtime_llm_event(
+                        llm=self,
+                        raw_input=item,
+                        kwargs=kwargs,
+                        ai_message=ai_message,
+                        was_cache_hit=False,
+                    )
+            return outputs
 
         if not isinstance(inputs, (list, tuple)):
-            return await original(self, inputs, *args, **kwargs)
+            output = await original(self, inputs, *args, **kwargs)
+            _emit_runtime_llm_event(
+                llm=self,
+                raw_input=inputs,
+                kwargs=kwargs,
+                ai_message=output,
+                was_cache_hit=False,
+            )
+            return output
 
         decisions = []
         all_cached = True
@@ -384,7 +650,21 @@ def _make_abatch_wrapper(original: Any):
         if all_cached:
             return [decision.ai_message for decision in decisions]
 
-        return await original(self, inputs, *args, **kwargs)
+        outputs = await original(self, inputs, *args, **kwargs)
+        if isinstance(outputs, list):
+            for idx, item in enumerate(inputs):
+                decision = decisions[idx]
+                if decision is not None and decision.hit:
+                    continue
+                ai_message = outputs[idx] if idx < len(outputs) else None
+                _emit_runtime_llm_event(
+                    llm=self,
+                    raw_input=item,
+                    kwargs=kwargs,
+                    ai_message=ai_message,
+                    was_cache_hit=False,
+                )
+        return outputs
 
     return wrapped
 

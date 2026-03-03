@@ -12,12 +12,14 @@ from agenttest.config_loader import load_config
 from agenttest.models.comparison import ComparisonResult, StepComparison, StepStatus, MatchType
 from agenttest.models.recording import Recording, RecordingStatus
 from agenttest.models.tag import Tag
-from agenttest.models.config import AgentTestConfig
+from agenttest.models.config import AgentTestConfig, ScenarioConfig
 from agenttest.pytest_plugin.assertions import assert_no_regression
+from agenttest.runner.orchestrator import run_scenario_record, run_scenario_replay
 
 __all__ = [
     "AgentTestSession", "Recorder", "Replayer", "Comparison",
     "ComparisonResult", "StepComparison", "StepStatus", "MatchType",
-    "Recording", "RecordingStatus", "Tag", "AgentTestConfig",
+    "Recording", "RecordingStatus", "Tag", "AgentTestConfig", "ScenarioConfig",
     "load_config", "assert_no_regression",
+    "run_scenario_record", "run_scenario_replay",
 ]

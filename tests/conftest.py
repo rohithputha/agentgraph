@@ -39,18 +39,23 @@ def invoke_config(agenttest_session: AgentTestSession, callback) -> Dict[str, An
 
 
 @pytest.fixture(autouse=True)
-def disable_runtime_langchain_patch(monkeypatch):
+def disable_runtime_langchain_patch(monkeypatch, request):
     """
     Keep tests deterministic in environments where importing BaseChatModel can
     pull in heavy optional stacks. Wrapper-based replay coverage remains active.
     """
     if (
-        os.getenv("AGENTTEST_RUN_LANGCHAIN_RUNTIME") == "1"
+        request.node.get_closest_marker("agenttest_runtime") is not None
+        or os.getenv("AGENTTEST_RUN_LANGCHAIN_RUNTIME") == "1"
         or os.getenv("AGENTTEST_RUN_LIVE") == "1"
     ):
         return
 
     monkeypatch.setattr(
         "agenttest.replayer.install_global_runtime_interception",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "agenttest.recorder.install_global_runtime_interception",
         lambda: False,
     )

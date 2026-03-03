@@ -9,7 +9,9 @@ from agenttest.models.config import AgentTestConfig
 from agenttest.models.recording import Recording
 from agenttest.interceptors.runtime import (
     install_global_runtime_interception,
+    reset_active_recording_context,
     reset_active_replay_context,
+    set_active_recording_context,
     set_active_replay_context,
 )
 
@@ -60,6 +62,7 @@ class Replayer:
         self._gatekeeper: Optional[Any] = None
         self._wrapped_models_count = 0
         self._runtime_context_token = None
+        self._runtime_recording_token = None
 
         self.comparison_result: Optional[ComparisonResult] = None
         self.baseline_details = []
@@ -89,6 +92,7 @@ class Replayer:
             self._activate_runtime_context()
 
         self._start_replay_recording()
+        self._activate_runtime_recording_context()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -150,6 +154,8 @@ class Replayer:
         finally:
             reset_active_replay_context(self._runtime_context_token)
             self._runtime_context_token = None
+            reset_active_recording_context(self._runtime_recording_token)
+            self._runtime_recording_token = None
 
     def _setup_interception(self):
         if not INTERCEPTION_AVAILABLE:
@@ -182,6 +188,14 @@ class Replayer:
             mode=self.mode,
             baseline_name=self.baseline_name,
             replay_name=self.replay_name,
+        )
+
+    def _activate_runtime_recording_context(self):
+        install_global_runtime_interception()
+        self._runtime_recording_token = set_active_recording_context(
+            session=self.session,
+            mode="replay",
+            run_name=self.replay_name,
         )
 
     def _assert_interception_integration(self):

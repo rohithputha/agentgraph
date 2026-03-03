@@ -66,6 +66,7 @@ packages = [
     "agenttest.interceptors",
     "agenttest.pytest_plugin",
     "agenttest.cli",
+    "agenttest.runner",
 ]
 
 [tool.setuptools.package-dir]
@@ -75,6 +76,7 @@ agenttest = "."
 "agenttest.interceptors" = "./interceptors"
 "agenttest.pytest_plugin" = "./pytest_plugin"
 "agenttest.cli" = "./cli"
+"agenttest.runner" = "./runner"
 
 [tool.setuptools.package-data]
 "agenttest.storage" = ["*.sql"]

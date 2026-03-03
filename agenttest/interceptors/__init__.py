@@ -7,10 +7,13 @@ always importable so the rest of the package can load in minimal environments.
 
 from agenttest.interceptors.runtime import (
     LockedModeNetworkError,
+    get_active_recording_context,
     get_active_replay_context,
     install_global_runtime_interception,
     is_runtime_interception_installed,
+    reset_active_recording_context,
     reset_active_replay_context,
+    set_active_recording_context,
     set_active_replay_context,
     uninstall_global_runtime_interception,
 )
@@ -36,6 +39,9 @@ __all__ = [
     "ReplayMode",
     "ResponseBuilder",
     "LockedModeNetworkError",
+    "set_active_recording_context",
+    "reset_active_recording_context",
+    "get_active_recording_context",
     "set_active_replay_context",
     "reset_active_replay_context",
     "get_active_replay_context",

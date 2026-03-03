@@ -1,11 +1,15 @@
 """
 AgentTest CLI - Main entry point
 """
+import subprocess
 import sys
 import click
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Tuple
 
+from agenttest.config_loader import load_config
+from agenttest.runner.orchestrator import run_scenario_record, run_scenario_replay
 from agenttest.session import AgentTestSession
 
 
@@ -38,6 +42,39 @@ def _print_table(headers: list, rows: list) -> None:
     click.echo(sep)
     for row in rows:
         click.echo(fmt.format(*[str(v) for v in row]))
+
+
+def _run_pytest_replay(project_dir: str, mode: str, tier: str, test_names: Tuple[str, ...]) -> int:
+    args = ["python", "-m", "pytest", "--agenttest", f"--agenttest-mode={mode}", "-v"]
+    if tier != "all":
+        args += [f"--agenttest-tier={tier}"]
+    if test_names:
+        args += ["-k", " or ".join(test_names)]
+    result = subprocess.run(args, cwd=project_dir)
+    return int(result.returncode)
+
+
+def _run_pytest_record(project_dir: str, name: str) -> int:
+    args = [
+        "python",
+        "-m",
+        "pytest",
+        "--agenttest",
+        "--agenttest-record",
+        "--agenttest-mode=full",
+        "-v",
+        "-k",
+        name,
+    ]
+    result = subprocess.run(args, cwd=project_dir)
+    return int(result.returncode)
+
+
+def _load_project_config(project_dir: str):
+    config_path = Path(project_dir) / "agenttest.toml"
+    if config_path.exists():
+        return load_config(str(config_path))
+    return load_config()
 
 
 @click.group()
@@ -275,18 +312,54 @@ def history(ctx, failed):
 @cli.command()
 @click.option("--mode", type=click.Choice(["locked", "selective", "full"]), default="locked", show_default=True)
 @click.option("--tier", type=click.Choice(["always", "local", "ci-only", "all"]), default="all", show_default=True)
+@click.option("--scenario", default=None, help="Scenario name from [[scenarios]] in agenttest.toml")
+@click.option("--backend", type=click.Choice(["auto", "scenario", "pytest"]), default="auto", show_default=True)
 @click.argument("test_names", nargs=-1)
 @click.pass_context
-def replay(ctx, mode, tier, test_names):
-    """Run agent tests in replay mode (default: locked)."""
-    import subprocess
-    args = ["python", "-m", "pytest", "--agenttest", f"--agenttest-mode={mode}", "-v"]
-    if tier != "all":
-        args += [f"--agenttest-tier={tier}"]
-    if test_names:
-        args += ["-k", " or ".join(test_names)]
-    result = subprocess.run(args, cwd=ctx.obj["project_dir"])
-    sys.exit(result.returncode)
+def replay(ctx, mode, tier, scenario, backend, test_names):
+    """Run replay either through standalone scenario runner or pytest backend."""
+    project_dir = ctx.obj["project_dir"]
+
+    if backend in {"scenario", "auto"}:
+        # Explicit scenario run
+        if scenario:
+            result = run_scenario_replay(
+                project_dir=project_dir,
+                scenario_name=scenario,
+                mode=mode,
+            )
+            click.echo(result.message)
+            if result.comparison_id:
+                click.echo(f"comparison_id={result.comparison_id}")
+            sys.exit(result.exit_code)
+
+        # Auto mode: if no test filter and scenarios exist in config, run all scenarios.
+        if backend == "auto" and not test_names:
+            config = _load_project_config(project_dir)
+            if config.scenarios:
+                worst_exit_code = 0
+                for cfg in config.scenarios:
+                    result = run_scenario_replay(
+                        project_dir=project_dir,
+                        scenario_name=cfg.name,
+                        mode=mode,
+                    )
+                    click.echo(f"[{cfg.name}] {result.status}: {result.message}")
+                    if result.comparison_id:
+                        click.echo(f"[{cfg.name}] comparison_id={result.comparison_id}")
+                    worst_exit_code = max(worst_exit_code, result.exit_code)
+                sys.exit(worst_exit_code)
+
+    if backend == "scenario":
+        click.echo(
+            "Scenario backend selected but no scenario specified and no scenarios configured.",
+            err=True,
+        )
+        sys.exit(3)
+
+    # Pytest fallback path
+    exit_code = _run_pytest_replay(project_dir=project_dir, mode=mode, tier=tier, test_names=test_names)
+    sys.exit(exit_code)
 
 
 @cli.command()
@@ -366,24 +439,53 @@ def status(ctx):
 
 
 @cli.command()
-@click.option("--name", required=True, help="Test name to re-record")
+@click.option("--name", required=False, help="Pytest -k filter (pytest backend) or recording name override")
+@click.option("--scenario", default=None, help="Scenario name from [[scenarios]] in agenttest.toml")
+@click.option("--backend", type=click.Choice(["auto", "scenario", "pytest"]), default="auto", show_default=True)
+@click.option("--set-baseline/--no-set-baseline", default=True, show_default=True)
 @click.pass_context
-def record(ctx, name):
-    """Re-record a test from scratch (full mode, all live calls)."""
-    import subprocess
-    args = [
-        "python",
-        "-m",
-        "pytest",
-        "--agenttest",
-        "--agenttest-record",
-        "--agenttest-mode=full",
-        "-v",
-        "-k",
-        name,
-    ]
-    result = subprocess.run(args, cwd=ctx.obj["project_dir"])
-    sys.exit(result.returncode)
+def record(ctx, name, scenario, backend, set_baseline):
+    """Record baseline through standalone scenario runner or pytest backend."""
+    project_dir = ctx.obj["project_dir"]
+
+    if backend in {"scenario", "auto"}:
+        if scenario:
+            result = run_scenario_record(
+                project_dir=project_dir,
+                scenario_name=scenario,
+                set_as_baseline=set_baseline,
+                recording_name=name,
+            )
+            click.echo(result.message)
+            sys.exit(result.exit_code)
+
+        if backend == "auto" and not name:
+            config = _load_project_config(project_dir)
+            if config.scenarios:
+                worst_exit_code = 0
+                for cfg in config.scenarios:
+                    result = run_scenario_record(
+                        project_dir=project_dir,
+                        scenario_name=cfg.name,
+                        set_as_baseline=set_baseline,
+                    )
+                    click.echo(f"[{cfg.name}] {result.status}: {result.message}")
+                    worst_exit_code = max(worst_exit_code, result.exit_code)
+                sys.exit(worst_exit_code)
+
+    if backend == "scenario":
+        click.echo(
+            "Scenario backend selected but no scenario specified and no scenarios configured.",
+            err=True,
+        )
+        sys.exit(3)
+
+    if not name:
+        click.echo("Pytest backend requires --name <pytest-k-filter>.", err=True)
+        sys.exit(2)
+
+    exit_code = _run_pytest_record(project_dir=project_dir, name=name)
+    sys.exit(exit_code)
 
 
 @cli.command(name="set-baseline")
