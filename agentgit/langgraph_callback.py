@@ -1,5 +1,7 @@
 from uuid import UUID
 import time
+import os
+import logging
 from typing import Any, Dict, List, Optional, Union
 
 from langchain_core.messages import BaseMessage
@@ -7,6 +9,8 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 from .eventbus import Eventbus
 from .event import Event, EventType
+
+logger = logging.getLogger(__name__)
 
 # Import fingerprinting for AgentTest
 try:
@@ -23,6 +27,31 @@ class langgraph_callback(BaseCallbackHandler):
         self._runs = {}
         self._tool_runs = {}
         self._context_map = {} # run_id -> (user_id, session_id)
+
+    def _fallback_context(self, run_id: Optional[str], parent_run_id: Optional[str]) -> tuple[str, str]:
+        rid = run_id or parent_run_id or f"unknown-{int(time.time() * 1000)}"
+        return f"anonymous:{os.getpid()}", f"run:{rid}"
+
+    def _context_from_map(self, run_id: Optional[str], parent_run_id: Optional[str]) -> Optional[tuple[str, str]]:
+        if run_id and run_id in self._context_map:
+            return self._context_map[run_id]
+        if parent_run_id and parent_run_id in self._context_map:
+            return self._context_map[parent_run_id]
+        return None
+
+    def _get_or_create_context_for_run(self, run_id: Optional[str], parent_run_id: Optional[str] = None) -> tuple[str, str]:
+        mapped = self._context_from_map(run_id, parent_run_id)
+        if mapped:
+            return mapped
+        user_id, session_id = self._fallback_context(run_id, parent_run_id)
+        if run_id:
+            self._context_map[str(run_id)] = (user_id, session_id)
+        logger.warning(
+            "Missing user/session context; using fallback user_id=%s session_id=%s",
+            user_id,
+            session_id,
+        )
+        return user_id, session_id
     
     def _get_session_context(self, kwargs: dict, run_id: str = None, parent_run_id: str = None, metadata: dict = None) -> tuple[str, str]:
         """Extract user_id and session_id from config, metadata, or context map."""
@@ -40,12 +69,14 @@ class langgraph_callback(BaseCallbackHandler):
 
         # 3. Try context map (self or parent)
         if not user_id or not session_id:
-            if run_id and run_id in self._context_map:
-                user_id, session_id = self._context_map[run_id]
-            elif parent_run_id and parent_run_id in self._context_map:
-                user_id, session_id = self._context_map[parent_run_id]
-                
-        return user_id or "default", session_id or "default"
+            mapped = self._context_from_map(run_id, parent_run_id)
+            if mapped:
+                user_id, session_id = mapped
+
+        if not user_id or not session_id:
+            user_id, session_id = self._get_or_create_context_for_run(run_id, parent_run_id)
+
+        return user_id, session_id
 
     def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any], *, run_id: UUID, parent_run_id: Optional[UUID] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
         # print(f"DEBUG: on_chain_start run_id={run_id} parent={parent_run_id}")
@@ -264,7 +295,7 @@ class langgraph_callback(BaseCallbackHandler):
     def on_llm_end(self, response, *, run_id: str, **kwargs):
         """ENHANCED: Now captures tool_calls and full response_data for AgentTest"""
 
-        user_id, session_id = self._context_map.get(str(run_id), ("default", "default"))
+        user_id, session_id = self._get_or_create_context_for_run(str(run_id))
         run = self._runs.get(run_id)
 
         # Handle case where run_id not found (shouldn't happen, but be defensive)
@@ -368,7 +399,7 @@ class langgraph_callback(BaseCallbackHandler):
         
         # Publish event
         if self.eventbus:
-            user_id, session_id = self._context_map.get(str(run_id), ("default", "default"))
+            user_id, session_id = self._get_or_create_context_for_run(str(run_id))
             self.eventbus.publish(EventType.TOOL_CALL_END, Event(
                 type=EventType.TOOL_CALL_END,
                 user_id=user_id,
@@ -420,7 +451,7 @@ class langgraph_callback(BaseCallbackHandler):
                 # Include raw outputs for other chain types
                 event_data["outputs"] = str(outputs)
 
-            user_id, session_id = self._context_map.get(str(run_id), ("default", "default"))
+            user_id, session_id = self._get_or_create_context_for_run(str(run_id))
             self.eventbus.publish(EventType.AGENT_TURN_END, Event(
                 type=EventType.AGENT_TURN_END,
                 user_id=user_id,

@@ -41,9 +41,9 @@ def assert_no_new_errors(
     comparison_result: ComparisonResult
 ) -> None:
     for step in comparison_result.step_comparisons:
-        if hasattr(step, 'error') and step.error:
+        if step.replay_error and not step.baseline_error:
             raise AssertionError(
-                f"Error at step {step.step_index}: {step.error}"
+                f"New replay error at step {step.step_index}: {step.replay_error}"
             )
 
 

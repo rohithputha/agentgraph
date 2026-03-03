@@ -76,7 +76,8 @@ def agenttest_session(request, agenttest_config):
     session = AgentTestSession.standalone(
         project_dir=project_dir,
         user_id="pytest",
-        session_id="test-session"
+        session_id="test-session",
+        config=agenttest_config,
     )
 
     yield session

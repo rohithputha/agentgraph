@@ -35,7 +35,7 @@ class Replayer:
         self.baseline_name = baseline_name
         self.replay_name = replay_name or f"{baseline_name}-replay"
         self.mode = mode.lower()
-        self.config = config or getattr(session, 'config', AgentTestConfig())
+        self.config = config or session.config
         self.middleware = []
 
         if self.mode not in ["full", "selective", "locked"]:

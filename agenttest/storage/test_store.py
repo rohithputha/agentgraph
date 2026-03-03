@@ -43,18 +43,52 @@ class TestStore:
         self._run_migrations()
         self.conn.commit()
 
+    def _column_exists(self, table: str, column: str) -> bool:
+        rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(row["name"] == column for row in rows)
+
     def _run_migrations(self):
         migrations = [
-            "ALTER TABLE at_llm_call_details ADD COLUMN was_cache_hit INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE at_comparisons ADD COLUMN regression_steps INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE at_comparisons ADD COLUMN delta_steps INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE at_step_comparisons ADD COLUMN was_cache_hit INTEGER",
+            (
+                "at_llm_call_details",
+                "was_cache_hit",
+                "ALTER TABLE at_llm_call_details ADD COLUMN was_cache_hit INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "at_comparisons",
+                "regression_steps",
+                "ALTER TABLE at_comparisons ADD COLUMN regression_steps INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "at_comparisons",
+                "delta_steps",
+                "ALTER TABLE at_comparisons ADD COLUMN delta_steps INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "at_step_comparisons",
+                "was_cache_hit",
+                "ALTER TABLE at_step_comparisons ADD COLUMN was_cache_hit INTEGER",
+            ),
+            (
+                "at_step_comparisons",
+                "baseline_error",
+                "ALTER TABLE at_step_comparisons ADD COLUMN baseline_error TEXT",
+            ),
+            (
+                "at_step_comparisons",
+                "replay_error",
+                "ALTER TABLE at_step_comparisons ADD COLUMN replay_error TEXT",
+            ),
         ]
-        for sql in migrations:
+        for table, column, sql in migrations:
+            if self._column_exists(table, column):
+                continue
             try:
                 self.conn.execute(sql)
-            except Exception:
-                pass  # Column already exists
+            except sqlite3.OperationalError as exc:
+                raise RuntimeError(
+                    f"Failed migration on {table}.{column}: {exc}"
+                ) from exc
 
     # ==================== Tags CRUD ====================
 
@@ -249,16 +283,23 @@ class TestStore:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def update_recording_step_count(self, recording_id: str, step_count: int) -> bool:
+    def update_recording_step_count(
+        self,
+        recording_id: str,
+        step_count: int,
+        autocommit: bool = False
+    ) -> bool:
         """
         Update recording step count.
 
-        Note: Does NOT commit. Called during event processing where
-        eventbus manages the transaction boundary.
+        Note: by default this does NOT commit, because eventbus owns the
+        transaction boundary for event handlers.
         """
         cursor = self.conn.execute("""
             UPDATE at_recordings SET step_count = ? WHERE recording_id = ?
         """, (step_count, recording_id))
+        if autocommit:
+            self.conn.commit()
         return cursor.rowcount > 0
 
     def delete_recording(self, recording_id: str) -> bool:
@@ -271,12 +312,12 @@ class TestStore:
 
     # ==================== LLM Call Details CRUD ====================
 
-    def insert_llm_call_detail(self, detail: LLMCallDetail) -> int:
+    def insert_llm_call_detail(self, detail: LLMCallDetail, autocommit: bool = False) -> int:
         """
         Insert LLM call detail.
 
-        Note: Does NOT commit. Called during event processing where
-        eventbus manages the transaction boundary.
+        Note: by default this does NOT commit, because eventbus owns the
+        transaction boundary for event handlers.
         """
         cursor = self.conn.execute("""
             INSERT INTO at_llm_call_details (
@@ -302,6 +343,8 @@ class TestStore:
             detail.error,
             json.dumps(detail.metadata) if detail.metadata else None
         ))
+        if autocommit:
+            self.conn.commit()
         return cursor.lastrowid
 
     def get_llm_call_detail(self, detail_id: int) -> Optional[LLMCallDetail]:
@@ -394,8 +437,8 @@ class TestStore:
                     baseline_node_id, replay_node_id,
                     baseline_detail_id, replay_detail_id,
                     status, match_type, similarity_score, diff_summary,
-                    was_cache_hit
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    baseline_error, replay_error, was_cache_hit
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 result.comparison_id,
                 sc.step_index,
@@ -407,6 +450,8 @@ class TestStore:
                 sc.match_type.value if sc.match_type else None,
                 sc.similarity_score,
                 sc.diff_summary,
+                sc.baseline_error,
+                sc.replay_error,
                 (1 if sc.was_cache_hit else 0) if sc.was_cache_hit is not None else None,
             ))
 
@@ -604,6 +649,8 @@ class TestStore:
             match_type=MatchType(row['match_type']) if row['match_type'] else None,
             similarity_score=row['similarity_score'],
             diff_summary=row['diff_summary'],
+            baseline_error=row['baseline_error'] if 'baseline_error' in row.keys() else None,
+            replay_error=row['replay_error'] if 'replay_error' in row.keys() else None,
             was_cache_hit=bool(wch) if wch is not None else None,
         )
 

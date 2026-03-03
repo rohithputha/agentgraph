@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS at_llm_call_details (
     request_params TEXT NOT NULL,             -- JSON: full request parameters
     response_data TEXT NOT NULL,              -- JSON: full response data
     is_streaming INTEGER NOT NULL DEFAULT 0,
+    was_cache_hit INTEGER NOT NULL DEFAULT 0,
     stream_id TEXT,
     duration_ms INTEGER NOT NULL DEFAULT 0,
     token_usage TEXT,                         -- JSON: {prompt_tokens, completion_tokens, total_tokens}
@@ -110,6 +111,8 @@ CREATE TABLE IF NOT EXISTS at_comparisons (
     added_steps INTEGER NOT NULL DEFAULT 0,
     removed_steps INTEGER NOT NULL DEFAULT 0,
     cascade_steps INTEGER NOT NULL DEFAULT 0,
+    regression_steps INTEGER NOT NULL DEFAULT 0,
+    delta_steps INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     metadata TEXT,                             -- JSON: test_name, tags, etc.
     FOREIGN KEY (baseline_recording_id) REFERENCES at_recordings(recording_id),
@@ -140,6 +143,9 @@ CREATE TABLE IF NOT EXISTS at_step_comparisons (
     match_type TEXT,                          -- exact, similar, mismatch, unknown
     similarity_score REAL NOT NULL DEFAULT 0.0,
     diff_summary TEXT,
+    baseline_error TEXT,
+    replay_error TEXT,
+    was_cache_hit INTEGER,
     FOREIGN KEY (comparison_id) REFERENCES at_comparisons(comparison_id),
     FOREIGN KEY (baseline_node_id) REFERENCES nodes(id),
     FOREIGN KEY (replay_node_id) REFERENCES nodes(id),

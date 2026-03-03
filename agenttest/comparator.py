@@ -75,6 +75,8 @@ class Comparison:
                 match_type=None,
                 similarity_score=0,
                 diff_summary = "Step removed in replay",
+                baseline_error=pair.baseline_detail.error if pair.baseline_detail else None,
+                replay_error=None,
                 was_cache_hit=None
             )
 
@@ -89,6 +91,8 @@ class Comparison:
                 match_type = None,
                 similarity_score = 0,
                 diff_summary = "Step added in replay",
+                baseline_error=None,
+                replay_error=pair.replay_detail.error if pair.replay_detail else None,
                 was_cache_hit=pair.replay_detail.was_cache_hit if pair.replay_detail else None
             )
         
@@ -107,6 +111,8 @@ class Comparison:
                 match_type = MatchType.EXACT,
                 similarity_score = 1,
                 diff_summary = None,
+                baseline_error=baseline.error,
+                replay_error=replay.error,
                 was_cache_hit=replay.was_cache_hit
             )
 
@@ -126,6 +132,8 @@ class Comparison:
                 match_type=MatchType.SIMILAR,
                 similarity_score=combined_score,
                 diff_summary=None,
+                baseline_error=baseline.error,
+                replay_error=replay.error,
                 was_cache_hit=replay.was_cache_hit
             )
 
@@ -139,6 +147,8 @@ class Comparison:
             match_type=None,
             similarity_score=combined_score,
             diff_summary=f"Similarity {combined_score:.2f} below threshold {self.threshold}",
+            baseline_error=baseline.error,
+            replay_error=replay.error,
             was_cache_hit=replay.was_cache_hit
         )
 

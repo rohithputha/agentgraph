@@ -20,6 +20,9 @@ from agenttest.models.llm_call_detail import LLMCallDetail
 from agenttest.models.comparison import ComparisonResult
 from agenttest.models.config import AgentTestConfig
 
+class RecordingStateError(RuntimeError):
+    pass
+
 
 class AgentTestSession:
     """
@@ -37,7 +40,8 @@ class AgentTestSession:
         self,
         agentgit: AgentGit,
         user_id: str = "agenttest",
-        session_id: str = "default"
+        session_id: str = "default",
+        config: Optional[AgentTestConfig] = None
     ):
         """
         Initialize AgentTestSession.
@@ -50,6 +54,7 @@ class AgentTestSession:
         self.ag = agentgit
         self.user_id = user_id
         self.session_id = session_id
+        self.config = config or AgentTestConfig()
 
         # Connection sharing - the key V3 mechanism
         self.test_store = TestStore(self.ag.dag_store.conn)
@@ -67,7 +72,8 @@ class AgentTestSession:
         cls,
         project_dir: str = ".",
         user_id: str = "agenttest",
-        session_id: str = "default"
+        session_id: str = "default",
+        config: Optional[AgentTestConfig] = None
     ) -> 'AgentTestSession':
         """
         Create a standalone session with its own AgentGit instance.
@@ -81,7 +87,7 @@ class AgentTestSession:
             AgentTestSession instance
         """
         ag = AgentGit(project_dir=project_dir)
-        return cls(ag, user_id, session_id)
+        return cls(ag, user_id, session_id, config=config)
 
     # ==================== Recording Lifecycle ====================
 
@@ -204,7 +210,11 @@ class AgentTestSession:
         branch = self.ag.dag_store.get_active_branch(user_id, session_id)
 
         if not branch or not branch.head_node_id:
-            return
+            raise RecordingStateError(
+                "Cannot create LLM detail for active recording "
+                f"{self._active_recording.recording_id}: no active branch/head for "
+                f"user_id={user_id}, session_id={session_id}, event_run_id={event.run_id}"
+            )
 
         node_id = int(branch.head_node_id)
 
@@ -236,7 +246,7 @@ class AgentTestSession:
         detail_id = self.test_store.insert_llm_call_detail(detail)
         detail.id = detail_id
 
-        # Update recording step count (no commit — eventbus owns the transaction boundary)
+        # Eventbus owns the transaction boundary for this callback.
         self._active_recording.step_count += 1
         self.test_store.update_recording_step_count(
             self._active_recording.recording_id,

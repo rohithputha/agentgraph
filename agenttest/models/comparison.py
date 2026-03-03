@@ -30,6 +30,8 @@ class StepComparison:
     match_type: Optional[MatchType]
     similarity_score: float
     diff_summary: Optional[str] = None
+    baseline_error: Optional[str] = None
+    replay_error: Optional[str] = None
     was_cache_hit: Optional[bool] = None  # None for REMOVE steps (no replay detail)
 
 

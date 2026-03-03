@@ -12,7 +12,7 @@ class Recorder:
     ):
         self.session = session
         self.name = name
-        self.config = config or getattr(session, 'config', AgentTestConfig())
+        self.config = config or session.config
         self.recording = None
         self.set_as_baseline_on_exit = False
 
