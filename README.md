@@ -9,52 +9,23 @@ Behavior regression testing for LLM agents.
 | `agenttest` | Record/replay behavior regression testing (CLI + pytest plugin) |
 | `agentgit` | Execution graph capture (LLM/tool events stored in SQLite DAG) |
 
-If you care about catching agent behavior drift in CI, `agenttest` is the primary product.
+If your goal is "catch behavior drift before merge", focus on `agenttest`.
 
-## Why this exists
+## What this gives you
 
-LLM agents are non-deterministic. Traditional "assert exact output" tests become noisy and brittle.
+LLM agents are non-deterministic, so exact-output assertions are noisy.
+`agenttest` turns this into a baseline consistency workflow:
 
-`agenttest` solves this by testing **consistency against an approved baseline**:
+1. Record a known-good run.
+2. Replay after code changes.
+3. Detect drift as `PASS`, `REGRESSION`, or `DELTA`.
+4. Accept intentional changes explicitly and commit updated baseline.
 
-1. Record a baseline run once.
-2. Replay on every change.
-3. Fail when behavior drifts from what was approved.
+This is a consistency framework, not a correctness oracle.
 
-This is a **consistency framework**, not a correctness oracle.
+## Quick Start (CLI-first)
 
-## Guarantees and Non-Guarantees
-
-### What `agenttest` guarantees
-
-- Structural drift is detected: added/removed/reordered LLM steps and route changes surface in replay.
-- Locked replay can run with zero live provider calls for intercepted paths.
-- Deltas/regressions are visible in comparison history and `.agentgit/` artifacts.
-- CLI-first workflow for CI/CD: `record`, `replay`, `accept`, `status`.
-
-### What it does not guarantee
-
-- It does not prove the baseline is correct.
-- It does not prove production outputs are globally correct for all unseen inputs.
-- Semantic comparison is not perfect for all language/domain edge cases.
-
-## How it works
-
-```text
-Your test (pytest + @agenttest marker)
-  -> graph.invoke(..., config={callbacks:[langgraph_callback(...)]})
-  -> agentgit callback emits LLM/tool events
-  -> agenttest stores per-step call details (prompt/response/fingerprint/cache-hit)
-
-Replay:
-  -> gatekeeper/runtime interception checks baseline cache
-  -> locked/selective/full mode decides cached vs live
-  -> comparator aligns baseline vs replay and reports PASS / REGRESSION / DELTA
-```
-
-## Quickstart (CLI-first)
-
-### 1. Install
+### 1) Install
 
 ```bash
 # from repo root
@@ -62,7 +33,7 @@ pip install -e .
 pip install -e agenttest/
 ```
 
-### 2. Write one marked test
+### 2) Write one marked test
 
 ```python
 import pytest
@@ -88,16 +59,16 @@ def test_support_refund(agenttest_session):
     assert result is not None
 ```
 
-### 3. Record baseline once
+### 3) Record baseline once
 
 ```bash
 agenttest record --name=test_support_refund
 ```
 
-### 4. Replay in CI/local
+### 4) Replay in CI/local
 
 ```bash
-# strict regression guard (default CI path)
+# strict regression guard (default path)
 agenttest replay --mode=locked
 
 # when intentionally changing prompts/graph
@@ -107,19 +78,71 @@ agenttest replay --mode=selective test_support_refund
 agenttest accept test_support_refund
 ```
 
-## Replay modes
+## Daily Workflow
 
-| Mode | Behavior |
-|---|---|
-| `locked` | Cache-only for intercepted LLM calls; miss becomes failure path |
-| `selective` | Cached calls reuse baseline; misses go live and are compared |
-| `full` | Live re-record of all calls |
+### Case A: "I only refactored code"
 
-Use `locked` for normal CI regression checks, `selective` when evolving behavior, `full` for major redesigns or baseline rebuilds.
+```bash
+agenttest replay --mode=locked
+```
 
-## CI/CD flow
+Expected: `PASS`.
 
-`agenttest` CLI is designed to be the CI entrypoint.
+### Case B: "I intentionally changed prompt / route / tool usage"
+
+```bash
+agenttest replay --mode=selective <test-filter>
+agenttest diff <comparison_id>
+agenttest accept <test-filter>
+```
+
+Expected: `DELTA` during review, then baseline update.
+
+### Case C: "Large redesign or baseline rebuild"
+
+```bash
+agenttest record --name=<pytest-k-filter>
+agenttest set-baseline <baseline_name>
+```
+
+Expected: full re-record.
+
+## Replay Modes
+
+| Mode | What it does | Typical use |
+|---|---|---|
+| `locked` | Cache-only behavior for intercepted calls; misses fail | CI regression gate |
+| `selective` | Cache hits reuse baseline, misses go live and get compared | Intentional behavior evolution |
+| `full` | Live re-record of all calls | Baseline rebuild / major redesign |
+
+## Where it works well today
+
+- Pytest-driven LangGraph/LangChain tests using `@pytest.mark.agenttest`.
+- CLI-first execution in local and CI: `agenttest record/replay/accept/status`.
+- Structured behavior history: `agenttest history`, `agenttest diff`.
+- Tiered CI split (`always`, `local`, `ci-only`) via `agenttest replay --tier=...`.
+- Locked-mode safety for known provider hosts through runtime network guard.
+
+## Current limitations (important)
+
+- Recording depends on callback wiring. If you do not pass `langgraph_callback(...)`, no LLM steps are captured.
+- Auto replay wrapping depends on marker/plugin path. Tests without `@pytest.mark.agenttest` are not managed automatically.
+- Non-standard model invocation paths (bypassing LangChain `BaseChatModel`) may need manual fallback integration.
+- Semantic equivalence scoring is currently basic; paraphrase-heavy domains can still produce noise.
+- Determinism boundaries for time/UUID/external side effects are not fully productized yet.
+
+## Expected failure modes and what to do
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Replay captures 0 steps | Callback/context not wired | Ensure callback + stable `configurable.user_id/session_id` |
+| Locked replay fails on cache miss | Real behavior changed or non-deterministic input changed | Use selective to review delta, then accept if intentional |
+| Selective made live calls you did not expect | Interception path incomplete for that model/tool flow | Use supported integration path, then baseline-update flow |
+| CI pass locally but fail in pipeline | Tier mismatch or missing baseline commit | Run same `agenttest replay --tier=...` locally and commit `.agentgit/` |
+
+## CI/CD Usage
+
+Use CLI commands directly in workflows:
 
 ```bash
 agenttest replay --mode=locked --tier=always
@@ -128,7 +151,7 @@ agenttest replay --mode=selective --tier=ci-only
 agenttest ci post-comment --pr=<number>
 ```
 
-Example workflow file is at `.github/workflows/agenttest.yml`.
+Reference workflow: `.github/workflows/agenttest.yml`.
 
 ## Commands
 
@@ -146,21 +169,28 @@ agenttest baseline set <name> <recording_id>
 agenttest pull-baseline --from-run <run_id>
 ```
 
-## Integration requirements
+## Integration checklist
 
-For reliable recording/replay in LangGraph tests:
+- Mark test with `@pytest.mark.agenttest`.
+- Use `@pytest.mark.baseline("...")` for stable baseline naming.
+- Pass `langgraph_callback(agenttest_session.ag.eventbus)` in graph calls.
+- Set stable `configurable.user_id` + `configurable.session_id`.
+- Commit `.agentgit/` when accepting intentional behavior changes.
 
-- Mark tests with `@pytest.mark.agenttest`.
-- Pass `langgraph_callback(agenttest_session.ag.eventbus)` in invocation callbacks.
-- Provide stable `configurable.user_id` and `configurable.session_id` in `config`.
+## In Pipeline
 
-For non-standard model paths that bypass LangChain `BaseChatModel`, manual wrapping (`replayer.wrap_model(...)`) may still be required.
+Planned improvements currently in progress:
+
+- Tool stubbing support: model behavior under different tool categories and replay modes.
+- Semantic similarity scoring improvements by mode (to reduce paraphrase noise and improve intent detection).
+- Hardening selective/locked behavior across more graph wiring and edge cases.
+- Oracle support: explicit determinism boundaries (time, UUID, external volatility) and documented breakage behavior.
 
 ## Repository layout
 
 - `agenttest/`: regression testing framework (CLI, plugin, replayer, comparator)
 - `agentgit/`: DAG/event storage and callback plumbing
-- `.agentgit/`: baseline and run artifacts (commit this intentionally when accepting behavior changes)
+- `.agentgit/`: baseline and run artifacts (commit intentionally when accepting behavior changes)
 - `tests/`: automated test suite for guarantees and integration behavior
 
 ## License
